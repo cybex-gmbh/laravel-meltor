@@ -1,0 +1,517 @@
+<?php
+
+namespace Meltor;
+
+use DateTime;
+use Exception;
+use Illuminate\Config\Repository;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+class Meltor
+{
+    /**
+     * Returns a config value for a specific key and checks for Callables.
+     *
+     * @param string $key
+     * @param null $default
+     *
+     * @return string|array|null
+     */
+    public function getConfigValueForKey(string $key, $default = null): string|array|null
+    {
+        $value = config(sprintf('meltor.%s', $key), $default);
+
+        return is_callable($value) ? $value() : $value;
+    }
+
+    /**
+     * Return the name of the MySQL database that will the base for the new, consolidated migration.
+     *
+     * @return Repository|\Illuminate\Contracts\Foundation\Application|mixed
+     * @throws Exception
+     */
+    public function getDatabaseName(string $defaultConnection): string
+    {
+        $configKey    = sprintf('database.connections.%s.database', $defaultConnection);
+        $databaseName = config($configKey);
+
+        if (!$databaseName) {
+            throw new Exception(sprintf('Could not read database name from config key: %s', $configKey));
+        }
+
+        return $databaseName;
+    }
+
+    /**
+     * Strips the leading database name from a (key) name pulled from the information schema.
+     *
+     * @param string $name
+     *
+     * @return string
+     */
+    public function stripDatabaseName(string $name): string
+    {
+        $strippedName = substr(strrchr($name, '/'), 1);
+
+        return $strippedName === false ? $name : $strippedName;
+    }
+
+    /**
+     * Returns the default database config.
+     *
+     * @return Repository|bool
+     */
+    public function getDatabaseConfig()
+    {
+        return config(
+            sprintf(
+                'database.connections.%s',
+                config('database.default')
+            ),
+            false
+        );
+    }
+
+    /**
+     * Returns a list of tables and their columns for the given MySQL database.
+     *
+     * @param $databaseName
+     * @return \Illuminate\Support\Collection
+     */
+    public function getDatabaseStructure(string $databaseName): Collection
+    {
+        return DB::table('COLUMNS')->where('TABLE_SCHEMA', $databaseName)->get()->groupBy('TABLE_NAME');
+    }
+
+    public function getUniqueKeys(string $databaseName): Collection
+    {
+        return collect(DB::select(sprintf($this->getConfigValueForKey('mysql.uniqueKeysQuery'), $databaseName)))->groupBy('TABLE_NAME');
+    }
+
+    public function getForeignKeys(string $databaseName): Collection
+    {
+        return collect(DB::select(sprintf($this->getConfigValueForKey('mysql.foreignKeysQuery'), $databaseName)))->groupBy('TABLE_NAME');
+    }
+
+    /**
+     * Extract the MySQL DATA_TYPE column property and check it.
+     *
+     * @param mixed $column
+     *
+     * @return mixed
+     * @throws Exception
+     */
+    protected function getDataType(mixed $column)
+    {
+        $columnType = $column->COLUMN_TYPE;
+        $dataType   = $column->DATA_TYPE;
+
+        if ($columnType == 'tinyint(1)') {
+            return 'boolean';
+        }
+
+        if (!array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentDataTypes'))) {
+            dump($column);
+            throw new Exception(sprintf('unknown DATA_TYPE value "%s"', $dataType));
+        }
+
+        return $dataType;
+    }
+
+    /**
+     * Extract the MySQL COLUMN_TYPE column property and check it.
+     *
+     * @param mixed $column
+     *
+     * @return mixed
+     * @throws Exception
+     */
+    protected function getColumnType(mixed $column)
+    {
+        $columnType = $column->COLUMN_TYPE;
+        $dataType   = $column->DATA_TYPE;
+
+        if (!preg_match('/' . $dataType . '(?:\(\d+\))?(?:\sunsigned)?/', $columnType)) {
+            throw new Exception(sprintf('unknown COLUMN_TYPE value "%s"', $columnType));
+        }
+
+        return $columnType;
+    }
+
+    /**
+     * Extract the MySQL EXTRA column property and check it.
+     *
+     * @param mixed $column
+     *
+     * @return mixed
+     * @throws Exception
+     */
+    protected function getExtra(mixed $column)
+    {
+        $extra = $column->EXTRA;
+
+        if (!preg_match('/(?:auto_increment)?/', $extra)) {
+            dump($column);
+            throw new Exception(sprintf('unknown EXTRA value "%s"', $extra));
+        }
+
+        return $extra;
+    }
+
+    /**
+     * Extracts the optional display width from the MySQL COLUMN_TYPE property.
+     *
+     * @param object $column
+     *
+     * @return mixed|null
+     * @throws Exception
+     */
+    protected function getDisplayWidth(object $column): ?int
+    {
+        $columnType = $column->COLUMN_TYPE;
+        $dataType   = $column->DATA_TYPE;
+
+        // Not supporting display width for integer fields at this time.
+        if (array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentIntegerTypes'))) {
+            return null;
+        }
+
+        $matches = [];
+
+        preg_match('/\((\d+)\).*/', $columnType, $matches);
+
+        if (count($matches) === 2) {
+            $intMatch = (int)$matches[1];
+            if ($intMatch != $matches[1]) {
+                dump($column);
+                throw new Exception(
+                    sprintf('unable to extract display width from COLUMN_TYPE value "%s"', $columnType)
+                );
+            }
+
+            return $intMatch;
+        } elseif (count($matches) === 0) {
+            return null;
+        }
+
+        dump($column);
+        throw new Exception(sprintf('unable to extract display width from COLUMN_TYPE value "%s"', $columnType));
+    }
+
+    /**
+     * Returns the MySQL indexes of the analyzed database.
+     *
+     * Needs access to MySQL information schema internals.
+     * There is an alternative way to retrieve this information in case this fails.
+     *
+     * @param string $databaseName
+     * @return array|string
+     */
+    public function getIndexesFromInnoDb(string $databaseName): array|string
+    {
+        $indexes = [];
+
+        try {
+            $dbIndexes = DB::table('INNODB_TABLES AS table')
+                           ->select(
+                               [
+                                   'table.NAME AS tableName',
+                                   'index.NAME AS indexName',
+                                   'field.NAME AS fieldName',
+                                   'field.POS AS fieldPosition',
+                               ]
+                           )
+                           ->join('INNODB_INDEXES AS index', 'table.TABLE_ID', '=', 'index.TABLE_ID')
+                           ->join('INNODB_FIELDS AS field', 'index.INDEX_ID', '=', 'field.INDEX_ID')
+                           ->where('table.NAME', 'LIKE', sprintf('%s/%%', $databaseName))
+                           ->where('index.TYPE', '=', 0)
+                           ->get();
+
+            $indexes = $dbIndexes->map(function ($item) {
+                $item->tableName = $this->stripDatabaseName($item->tableName);
+
+                return $item;
+            })->groupBy(['tableName', 'indexName'])->toArray();
+        } catch (QueryException $exception) {
+            // Doctrine will be used instead.
+            return $exception->getMessage();
+        }
+
+        return $indexes;
+    }
+
+    /**
+     * Return the index information of a table.
+     * Based on Doctrine, used as a backup because it looses information on the index key order.
+     *
+     * @param string $tableName
+     *
+     * @return Collection
+     */
+    public function getIndexesFor(string $tableName, $canAccessInnoDbIndexes, $indexes): Collection
+    {
+        if ($canAccessInnoDbIndexes) {
+            $cachedIndexes = $indexes[$tableName] ?? [];
+            $indexes       = collect();
+
+            if (!$cachedIndexes) {
+                return $indexes;
+            }
+
+            foreach ($cachedIndexes as $indexName => $indexFields) {
+                $indexes->put(
+                    $indexName,
+                    collect($indexFields)->sortBy('fieldPosition')->pluck('fieldName')->toArray()
+                );
+            }
+
+            return $indexes;
+        }
+
+        return collect(
+            DB::connection('mysql')->getDoctrineSchemaManager()->listTableIndexes($tableName)
+        )->filter(fn($item) => !$item->isUnique() && !$item->isPrimary())->mapWithKeys(
+            fn($item) => [$item->getName() => $item->getColumns()]
+        );
+    }
+
+    /**
+     * Returns a migration template.
+     *
+     * Exists to help refactor the handling of migration templates.
+     *
+     * @param string $name
+     * @param null $default
+     *
+     * @return string|null
+     */
+    protected function getMigrationTemplate(string $name, $default = null): ?string
+    {
+        $value = config(sprintf('meltor-templates.%s', $name), $default);
+
+        return is_callable($value) ? $value() : $value;
+    }
+
+    /**
+     * Returns the content of a Laravel migration file.
+     *
+     * @param array $tableMigrations
+     * @param array $constraintMigrations
+     *
+     * @return string
+     */
+    public function generateMigration(array $tableMigrations, array $constraintMigrations): string
+    {
+        $tableMigrationCode = [];
+
+        foreach ($tableMigrations as $tableName => $columnMigrations) {
+            $columns              = join("\n", $columnMigrations);
+            $tableMigrationCode[] = sprintf($this->getMigrationTemplate('createTable'), $tableName, $tableName, $columns);
+        }
+
+        $tables      = join('', $tableMigrationCode);
+        $constraints = '';
+
+        if (count($constraintMigrations)) {
+            $constraintMigrationCode = [];
+
+            foreach ($constraintMigrations as $tableName => $columnConstraintMigrations) {
+                if (count($columnConstraintMigrations)) {
+                    $columns                   = join("\n", $columnConstraintMigrations);
+                    $constraintMigrationCode[] = sprintf($this->getMigrationTemplate('alterTable'), $tableName, $columns);
+                }
+            }
+
+            $constraints = join('', $constraintMigrationCode);
+        }
+
+        return sprintf($this->getMigrationTemplate('migration'), (new DateTime())->format('Y-m-d H:i:s'), $tables, $constraints);
+    }
+
+    /**
+     * Describes one MySQL Column in Fluent.
+     *
+     * @param object $column
+     *
+     * @return string
+     * @throws Exception
+     */
+    public function generateColumnMigration(object $column): string
+    {
+        $columnName    = $column->COLUMN_NAME;
+        $nullable      = $column->IS_NULLABLE === 'YES';
+        $characterSet  = $column->CHARACTER_SET_NAME;
+        $collation     = $column->COLLATION_NAME;
+        $comment       = $column->COLUMN_COMMENT;
+        $dataType      = $this->getDataType($column);
+        $columnType    = $this->getColumnType($column);
+        $extra         = $this->getExtra($column);
+        $unsigned      = str_contains($columnType, 'unsigned');
+        $default       = $column->COLUMN_DEFAULT;
+        $autoIncrement = $extra === 'auto_increment';
+        $displayWidth  = $this->getDisplayWidth($column);
+        $parts         = [];
+
+        if ($columnName === 'id' && $dataType === 'bigint' && $unsigned && $autoIncrement) {
+            return sprintf($this->getMigrationTemplate('column'), 'id()');
+        }
+
+        if ($displayWidth) {
+            $parts[] = sprintf('%s(\'%s\', %d)', $this->getConfigValueForKey('mysql.fluentDataTypes')[$dataType], $columnName, $displayWidth);
+        } else {
+            $parts[] = sprintf('%s(\'%s\')', $this->getConfigValueForKey('mysql.fluentDataTypes')[$dataType], $columnName);
+        }
+
+        if ($unsigned) {
+            $parts[] = 'unsigned()';
+        }
+
+        if ($characterSet) {
+            $parts[] = sprintf('charset(\'%s\')', $characterSet);
+        }
+
+        if ($collation) {
+            $parts[] = sprintf('collation(\'%s\')', $collation);
+        }
+
+        if (!is_null($default)) {
+            if ($default === 'CURRENT_TIMESTAMP') {
+                $parts[] = 'useCurrent()';
+            } elseif (array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentIntegerTypes'))) {
+                $parts[] = sprintf('default(%d)', $default);
+            } else {
+                $parts[] = sprintf('default(\'%s\')', $default);
+            }
+        }
+
+        if ($comment) {
+            $parts[] = sprintf('comment(\'%s\')', $comment);
+        }
+
+        if ($nullable) {
+            $parts[] = 'nullable()';
+        }
+
+        return sprintf($this->getMigrationTemplate('column'), join('->', $parts));
+    }
+
+    /**
+     * Returns a unique key Laravel migration command.
+     *
+     * @param object $constraint
+     *
+     * @return string
+     */
+    public function generateUniqueKeyMigration(object $constraint): string
+    {
+        $name    = $constraint->INDEX_NAME;
+        $columns = explode(', ', $constraint->columns);
+
+        return sprintf($this->getMigrationTemplate('column'), sprintf('unique([\'%s\'], \'%s\')', join('\', \'', $columns), $name));
+    }
+
+    /**
+     * Returns an index key Laravel migration command.
+     *
+     * @param string $keyName
+     * @param array $columns
+     *
+     * @return string
+     */
+    public function generateIndexKeyMigration(string $keyName, array $columns): string
+    {
+        $columnsString = count($columns) > 1 ? sprintf('[\'%s\']', implode('\', \'', $columns)) : sprintf(
+            '\'%s\'',
+            $columns[0]
+        );
+
+        return sprintf($this->getMigrationTemplate('column'), sprintf('index(%s, \'%s\')', $columnsString, $keyName));
+    }
+
+    /**
+     * Returns a foreign key Laravel migration command.
+     *
+     * @param mixed $foreignKey
+     *
+     * @return string
+     */
+    public function generateForeignKeyMigration(mixed $foreignKey): string
+    {
+        $constraintName       = $foreignKey->CONSTRAINT_NAME;
+        $columnName           = $foreignKey->COLUMN_NAME;
+        $referencedTableName  = $foreignKey->REFERENCED_TABLE_NAME;
+        $referencedColumnName = $foreignKey->REFERENCED_COLUMN_NAME;
+
+        return sprintf(
+            $this->getMigrationTemplate('column'),
+            sprintf(
+                'foreign(\'%s\', \'%s\')->references(\'%s\')->on(\'%s\')',
+                $columnName,
+                $constraintName,
+                $referencedColumnName,
+                $referencedTableName
+            )
+        );
+    }
+
+    /**
+     * Consolidates according consecutive timestamp fields into timestamps().
+     *
+     * @param string $migrationCode
+     *
+     * @return string
+     */
+    public function beautify(string $migrationCode): string
+    {
+        $modifications = [
+            // Consolidate consecutive creation and update timestamps into timestamps().
+            '/\$table->timestamp\(\'created_at\'\)->nullable\(\);\s+\$table->timestamp\(\'updated_at\'\)->nullable\(\);/' => '$table->timestamps();',
+
+            // Consolidate various integer() kinds followed by unsigned() with the according decorative method.
+            '/\$table->bigInteger\(\'([^\']+)\'\)->unsigned\(\)/'                                                         => '$table->unsignedBigInteger(\'$1\')',
+            '/\$table->integer\(\'([^\']+)\'\)->unsigned\(\)/'                                                            => '$table->unsignedInteger(\'$1\')',
+            '/\$table->tinyInteger\(\'([^\']+)\'\)->unsigned\(\)/'                                                        => '$table->unsignedTinyInteger(\'$1\')',
+
+            // Remove the optional array braces when unique() only has one database field.
+            '/\$table->unique\(\[\'(\\w+)\'\], \'(\\w+)\'\);/'                                                            => '$table->unique(\'$1\', \'$2\');',
+        ];
+
+        foreach ($modifications as $search => $replace) {
+            $migrationCode = preg_replace($search, $replace, $migrationCode);
+        }
+
+        return $migrationCode;
+    }
+
+    /**
+     * Remove redundant CHARACTER SET definitions from a given structure dump to allow comparison.
+     * Character sets may be defined for a column, but not being extracted when they're identical to the table definition.
+     *
+     * @param string $sqlStructure
+     *
+     * @return string
+     */
+    public function removeRedundantCharSetFromDump(string $sqlStructure): string
+    {
+        return preg_replace('/CHARACTER SET (\w+)[\s,](?=[^;]+DEFAULT CHARSET=\1\s[^;]+;)/', '', $sqlStructure);
+    }
+
+    /**
+     * Remove generation timestamp from the given structure dump to allow comparison.
+     *
+     * @param string $sqlStructure
+     *
+     * @return array|string|string[]|null
+     */
+    public function removeTimeStampFromDump(string $sqlStructure)
+    {
+        // The time format in mysqldump file footers doesn't pad its zeroes according to ISO 8601, so trying to guess the format.
+        return preg_replace(
+            '/Dump completed on [\d\-\s:]+/',
+            'Dump completed on (removed for comparison)',
+            $sqlStructure
+        );
+    }
+}
