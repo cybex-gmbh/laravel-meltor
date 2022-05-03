@@ -22,6 +22,36 @@ You can install the package via composer:
 composer require cybex/laravel-meltor
 ```
 
+### Access to the MySQL information schema
+
+Add a new connection to `config/database.php` under the `connections` key, so that it is accessible with `config('database.connections.information_schema_mysql')`. 
+It can be based on your regular connection, with just the database set to `information_schema`. 
+
+For example
+```
+  // Information schema connection for the laravel-meltor package
+  'information_schema_mysql' => [
+      'driver'      => 'mysql',
+      'host'        => env('TEST_DB_HOST', env('DB_HOST', '127.0.0.1')),
+      'port'        => env('TEST_DB_PORT', env('DB_PORT', '3306')),
+      'database'    => 'information_schema',
+      'username'    => env('DB_USERNAME', 'forge'),
+      'password'    => env('DB_PASSWORD', ''),
+      'unix_socket' => env('DB_SOCKET', ''),
+      'charset'     => 'utf8mb4',
+      'collation'   => 'utf8mb4_unicode_ci',
+      'prefix'      => '',
+      'strict'      => true,
+      'engine'      => null,
+  ],
+```
+
+Make sure that your local database user has sufficient permissions to access the information_schema db.
+Configuring the root user to access the database is possible, but generally not recommended for multiple reasons.
+
+As this package intended to generate a new migration on a non-production system, there may be no need to commit this new connection.
+
+
 ## Usage
 
 To create a new migration file:
@@ -36,9 +66,10 @@ To also do a comparison between the old and the new database:
 php artisan make:meltor --testrun
 ```
 
-Note:
+Notes:
 
 - Delete all old migrations before starting the test run
+- You may need to give your mysql user additional permissions. It is possible, but generally not recommended to use the root user. 
 - You may need to keep migrations which alter tables created by the framework or packages
 - This command will need to modify your local database, but also restore it afterwards (the backup file will be put into
   the storage folder)

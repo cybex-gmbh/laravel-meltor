@@ -49,5 +49,6 @@ return new class extends Migration
         });
 ',
 
+    // Single column in a table.
     'column' => '                $table->%s;',
 ];

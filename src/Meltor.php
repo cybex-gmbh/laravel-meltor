@@ -5,9 +5,9 @@ namespace Meltor;
 use DateTime;
 use Exception;
 use Illuminate\Config\Repository;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 class Meltor
 {
@@ -19,29 +19,11 @@ class Meltor
      *
      * @return string|array|null
      */
-    public function getConfigValueForKey(string $key, $default = null): string|array|null
+    public function config(string $key, $default = null): string|array|null
     {
         $value = config(sprintf('meltor.%s', $key), $default);
 
         return is_callable($value) ? $value() : $value;
-    }
-
-    /**
-     * Return the name of the MySQL database that will the base for the new, consolidated migration.
-     *
-     * @return Repository|\Illuminate\Contracts\Foundation\Application|mixed
-     * @throws Exception
-     */
-    public function getDatabaseName(string $defaultConnection): string
-    {
-        $configKey    = sprintf('database.connections.%s.database', $defaultConnection);
-        $databaseName = config($configKey);
-
-        if (!$databaseName) {
-            throw new Exception(sprintf('Could not read database name from config key: %s', $configKey));
-        }
-
-        return $databaseName;
     }
 
     /**
@@ -77,22 +59,69 @@ class Meltor
     /**
      * Returns a list of tables and their columns for the given MySQL database.
      *
-     * @param $databaseName
-     * @return \Illuminate\Support\Collection
+     * @param string $databaseName
+     * @param ConnectionInterface $connection
+     * @return Collection
      */
-    public function getDatabaseStructure(string $databaseName): Collection
+    public function getDatabaseStructure(string $databaseName, ConnectionInterface $connection): Collection
     {
-        return DB::table('COLUMNS')->where('TABLE_SCHEMA', $databaseName)->get()->groupBy('TABLE_NAME');
+        return $connection->table('COLUMNS')->where('TABLE_SCHEMA', $databaseName)->get()->groupBy('TABLE_NAME');
     }
 
-    public function getUniqueKeys(string $databaseName): Collection
+    /**
+     * Returns a list of unique keys for the given MySQL database.
+     *
+     * @param string $databaseName
+     * @param ConnectionInterface $connection
+     * @return Collection
+     */
+    public function getUniqueKeys(string $databaseName, ConnectionInterface $connection): Collection
     {
-        return collect(DB::select(sprintf($this->getConfigValueForKey('mysql.uniqueKeysQuery'), $databaseName)))->groupBy('TABLE_NAME');
+        $query = 'SELECT
+                    stat.TABLE_SCHEMA AS database_name, 
+                    stat.TABLE_NAME, 
+                    stat.INDEX_NAME, 
+                    GROUP_CONCAT(stat.COLUMN_NAME ORDER BY stat.seq_in_index separator ", ") AS columns, 
+                    constraints.CONSTRAINT_TYPE
+                FROM information_schema.STATISTICS stat
+                     JOIN information_schema.table_constraints constraints
+                      ON stat.TABLE_SCHEMA = constraints.TABLE_SCHEMA
+                          AND stat.TABLE_NAME = constraints.TABLE_NAME
+                          AND stat.INDEX_NAME = constraints.CONSTRAINT_NAME
+
+                WHERE stat.NON_UNIQUE = 0
+                  AND stat.TABLE_SCHEMA = "%s"
+                  AND constraints.CONSTRAINT_TYPE = "UNIQUE"
+
+                GROUP BY stat.TABLE_SCHEMA,
+                         stat.TABLE_NAME,
+                         stat.INDEX_NAME,
+                         constraints.CONSTRAINT_TYPE
+
+                ORDER BY stat.TABLE_SCHEMA,
+                         stat.TABLE_NAME;';
+
+        return collect($connection->select(sprintf($query, $databaseName)))->groupBy('TABLE_NAME');
     }
 
-    public function getForeignKeys(string $databaseName): Collection
+    /**
+     * Returns a list of foreign keys for the given MySQL database.
+     *
+     * @param string $databaseName
+     * @param ConnectionInterface $connection
+     * @return Collection
+     */
+    public function getForeignKeys(string $databaseName, ConnectionInterface $connection): Collection
     {
-        return collect(DB::select(sprintf($this->getConfigValueForKey('mysql.foreignKeysQuery'), $databaseName)))->groupBy('TABLE_NAME');
+        $query = 'SELECT TABLE_NAME,
+                       COLUMN_NAME,
+                       CONSTRAINT_NAME,
+                       REFERENCED_TABLE_NAME,
+                       REFERENCED_COLUMN_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                WHERE REFERENCED_TABLE_SCHEMA = "%s";';
+
+        return collect($connection->select(sprintf($query, $databaseName)))->groupBy('TABLE_NAME');
     }
 
     /**
@@ -112,7 +141,7 @@ class Meltor
             return 'boolean';
         }
 
-        if (!array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentDataTypes'))) {
+        if (!array_key_exists($dataType, $this->config('mysql.fluentDataTypes'))) {
             dump($column);
             throw new Exception(sprintf('unknown DATA_TYPE value "%s"', $dataType));
         }
@@ -174,7 +203,7 @@ class Meltor
         $dataType   = $column->DATA_TYPE;
 
         // Not supporting display width for integer fields at this time.
-        if (array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentIntegerTypes'))) {
+        if (in_array($dataType, $this->config('mysql.fluentIntegerTypes'))) {
             return null;
         }
 
@@ -207,14 +236,13 @@ class Meltor
      * There is an alternative way to retrieve this information in case this fails.
      *
      * @param string $databaseName
+     * @param ConnectionInterface $connection
      * @return array|string
      */
-    public function getIndexesFromInnoDb(string $databaseName): array|string
+    public function getIndexesFromInnoDb(string $databaseName, ConnectionInterface $connection): array|string
     {
-        $indexes = [];
-
         try {
-            $dbIndexes = DB::table('INNODB_TABLES AS table')
+            $dbIndexes = $connection->table('INNODB_TABLES AS table')
                            ->select(
                                [
                                    'table.NAME AS tableName',
@@ -235,7 +263,6 @@ class Meltor
                 return $item;
             })->groupBy(['tableName', 'indexName'])->toArray();
         } catch (QueryException $exception) {
-            // Doctrine will be used instead.
             return $exception->getMessage();
         }
 
@@ -247,10 +274,12 @@ class Meltor
      * Based on Doctrine, used as a backup because it looses information on the index key order.
      *
      * @param string $tableName
-     *
+     * @param $canAccessInnoDbIndexes
+     * @param $indexes
+     * @param ConnectionInterface $connection
      * @return Collection
      */
-    public function getIndexesFor(string $tableName, $canAccessInnoDbIndexes, $indexes): Collection
+    public function getIndexesFor(string $tableName, $canAccessInnoDbIndexes, $indexes, ConnectionInterface $connection): Collection
     {
         if ($canAccessInnoDbIndexes) {
             $cachedIndexes = $indexes[$tableName] ?? [];
@@ -271,7 +300,7 @@ class Meltor
         }
 
         return collect(
-            DB::connection('mysql')->getDoctrineSchemaManager()->listTableIndexes($tableName)
+            $connection->getDoctrineSchemaManager()->listTableIndexes($tableName)
         )->filter(fn($item) => !$item->isUnique() && !$item->isPrimary())->mapWithKeys(
             fn($item) => [$item->getName() => $item->getColumns()]
         );
@@ -287,7 +316,7 @@ class Meltor
      *
      * @return string|null
      */
-    protected function getMigrationTemplate(string $name, $default = null): ?string
+    public function getMigrationTemplate(string $name, $default = null): ?string
     {
         $value = config(sprintf('meltor-templates.%s', $name), $default);
 
@@ -307,11 +336,11 @@ class Meltor
         $tableMigrationCode = [];
 
         foreach ($tableMigrations as $tableName => $columnMigrations) {
-            $columns              = join("\n", $columnMigrations);
+            $columns              = implode("\n", $columnMigrations);
             $tableMigrationCode[] = sprintf($this->getMigrationTemplate('createTable'), $tableName, $tableName, $columns);
         }
 
-        $tables      = join('', $tableMigrationCode);
+        $tables      = implode('', $tableMigrationCode);
         $constraints = '';
 
         if (count($constraintMigrations)) {
@@ -319,12 +348,12 @@ class Meltor
 
             foreach ($constraintMigrations as $tableName => $columnConstraintMigrations) {
                 if (count($columnConstraintMigrations)) {
-                    $columns                   = join("\n", $columnConstraintMigrations);
+                    $columns                   = implode("\n", $columnConstraintMigrations);
                     $constraintMigrationCode[] = sprintf($this->getMigrationTemplate('alterTable'), $tableName, $columns);
                 }
             }
 
-            $constraints = join('', $constraintMigrationCode);
+            $constraints = implode('', $constraintMigrationCode);
         }
 
         return sprintf($this->getMigrationTemplate('migration'), (new DateTime())->format('Y-m-d H:i:s'), $tables, $constraints);
@@ -350,6 +379,7 @@ class Meltor
         $extra         = $this->getExtra($column);
         $unsigned      = str_contains($columnType, 'unsigned');
         $default       = $column->COLUMN_DEFAULT;
+        $onUpdateTime  = str_contains($column->EXTRA, 'on update CURRENT_TIMESTAMP');
         $autoIncrement = $extra === 'auto_increment';
         $displayWidth  = $this->getDisplayWidth($column);
         $parts         = [];
@@ -359,9 +389,9 @@ class Meltor
         }
 
         if ($displayWidth) {
-            $parts[] = sprintf('%s(\'%s\', %d)', $this->getConfigValueForKey('mysql.fluentDataTypes')[$dataType], $columnName, $displayWidth);
+            $parts[] = sprintf('%s(\'%s\', %d)', $this->config('mysql.fluentDataTypes')[$dataType], $columnName, $displayWidth);
         } else {
-            $parts[] = sprintf('%s(\'%s\')', $this->getConfigValueForKey('mysql.fluentDataTypes')[$dataType], $columnName);
+            $parts[] = sprintf('%s(\'%s\')', $this->config('mysql.fluentDataTypes')[$dataType], $columnName);
         }
 
         if ($unsigned) {
@@ -379,7 +409,7 @@ class Meltor
         if (!is_null($default)) {
             if ($default === 'CURRENT_TIMESTAMP') {
                 $parts[] = 'useCurrent()';
-            } elseif (array_key_exists($dataType, $this->getConfigValueForKey('mysql.fluentIntegerTypes'))) {
+            } elseif (in_array($dataType, $this->config('mysql.fluentIntegerTypes'))) {
                 $parts[] = sprintf('default(%d)', $default);
             } else {
                 $parts[] = sprintf('default(\'%s\')', $default);
@@ -394,7 +424,12 @@ class Meltor
             $parts[] = 'nullable()';
         }
 
-        return sprintf($this->getMigrationTemplate('column'), join('->', $parts));
+        if ($onUpdateTime) {
+            $parts[] = 'useCurrent()';
+            $parts[] = 'useCurrentOnUpdate()';
+        }
+
+        return sprintf($this->getMigrationTemplate('column'), implode('->', $parts));
     }
 
     /**
@@ -409,7 +444,7 @@ class Meltor
         $name    = $constraint->INDEX_NAME;
         $columns = explode(', ', $constraint->columns);
 
-        return sprintf($this->getMigrationTemplate('column'), sprintf('unique([\'%s\'], \'%s\')', join('\', \'', $columns), $name));
+        return sprintf($this->getMigrationTemplate('column'), sprintf('unique([\'%s\'], \'%s\')', implode('\', \'', $columns), $name));
     }
 
     /**
@@ -486,6 +521,19 @@ class Meltor
     }
 
     /**
+     * Combine a filename with a path.
+     * Used when methods like storage_path() are not flexible enough.
+     *
+     * @param string $folder
+     * @param string $file
+     * @return string
+     */
+    public function combinePath(string $folder, string $file): string
+    {
+        return sprintf('%s/%s', $folder, $file);
+    }
+
+    /**
      * Remove redundant CHARACTER SET definitions from a given structure dump to allow comparison.
      * Character sets may be defined for a column, but not being extracted when they're identical to the table definition.
      *
@@ -493,7 +541,7 @@ class Meltor
      *
      * @return string
      */
-    public function removeRedundantCharSetFromDump(string $sqlStructure): string
+    protected function removeRedundantCharSetFromDump(string $sqlStructure): string
     {
         return preg_replace('/CHARACTER SET (\w+)[\s,](?=[^;]+DEFAULT CHARSET=\1\s[^;]+;)/', '', $sqlStructure);
     }
@@ -505,7 +553,7 @@ class Meltor
      *
      * @return array|string|string[]|null
      */
-    public function removeTimeStampFromDump(string $sqlStructure)
+    protected function removeTimeStampFromDump(string $sqlStructure)
     {
         // The time format in mysqldump file footers doesn't pad its zeroes according to ISO 8601, so trying to guess the format.
         return preg_replace(
@@ -513,5 +561,22 @@ class Meltor
             'Dump completed on (removed for comparison)',
             $sqlStructure
         );
+    }
+
+    /**
+     * Reads a given database structure file for comparison, and removes incomparable noise from the content.
+     *
+     * The resulting content is only suitable for comparison.
+     *
+     * @param string $structureFileName
+     * @return mixed
+     */
+    public function readAndCleanStructure(string $structureFileName): string
+    {
+        $structure = file_get_contents($structureFileName);
+        $structure = $this->removeTimeStampFromDump($structure);
+        $structure = $this->removeRedundantCharSetFromDump($structure);
+
+        return $structure;
     }
 }

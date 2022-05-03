@@ -1,6 +1,27 @@
 <?php
 
+use Illuminate\Support\Facades\DB;
+
 return [
+
+    // Names of the Laravel connections, used as the base for the new, generated migration.
+    'connection' => [
+
+        // Connection to read the tables.
+        'data'   => fn() => DB::getDefaultConnection(),
+
+        // You may need to create a new DB connection that points to the information_schema. See README.md.
+        'schema' => 'information_schema_mysql',
+    ],
+
+    'migration' => [
+
+        // Filename of the new, generated migration.
+        'name' => 'meltor',
+
+        // Folder where the migrations will be placed.
+        'folder' => fn() => database_path('migrations'),
+    ],
 
     // The test run option applies the new migration, and compares the resulting DB structure
     'testrun' => [
@@ -11,6 +32,16 @@ return [
         // The database structure files which will be the base of comparison.
         'beforeStructureFileName' => 'meltorStructureBefore.sql',
         'afterStructureFileName'  => 'meltorStructureAfter.sql',
+
+        // Folder where the comparison files will be placed.
+        'folder' => fn() => storage_path(),
+
+        // Tables excluded from comparison.
+        'excludedTables' => [
+            'migrations',
+            'job_batches',
+            'personal_access_tokens',
+        ],
     ],
 
     // MySQL data types are being converted to Laravel fluent ones.
@@ -34,39 +65,9 @@ return [
         ],
 
         'fluentIntegerTypes' => [
-            'bigint'  => 'bigInteger',
-            'int'     => 'integer',
-            'tinyint' => 'tinyInteger',
+            'bigint',
+            'int',
+            'tinyint',
         ],
-
-        // TODO: Refactor into a method using DB::class
-        'uniqueKeysQuery'    => 'SELECT
-                    stat.TABLE_SCHEMA AS database_name, stat.TABLE_NAME, stat.INDEX_NAME, GROUP_CONCAT(stat.COLUMN_NAME ORDER BY stat.seq_in_index separator ", ") AS columns, tco.CONSTRAINT_TYPE
-                FROM information_schema.STATISTICS stat
-                     JOIN information_schema.table_constraints tco
-                      ON stat.TABLE_SCHEMA = tco.TABLE_SCHEMA
-                          AND stat.TABLE_NAME = tco.TABLE_NAME
-                          AND stat.INDEX_NAME = tco.CONSTRAINT_NAME
-
-                WHERE stat.NON_UNIQUE = 0
-                  AND stat.TABLE_SCHEMA = "%s"
-                  AND tco.CONSTRAINT_TYPE = "UNIQUE"
-
-                GROUP BY stat.TABLE_SCHEMA,
-                         stat.TABLE_NAME,
-                         stat.INDEX_NAME,
-                         tco.CONSTRAINT_TYPE
-
-                ORDER BY stat.TABLE_SCHEMA,
-                         stat.TABLE_NAME;',
-
-        // TODO: Refactor into a method using DB::class
-        'foreignKeysQuery'   => 'SELECT TABLE_NAME,
-                       COLUMN_NAME,
-                       CONSTRAINT_NAME,
-                       REFERENCED_TABLE_NAME,
-                       REFERENCED_COLUMN_NAME
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE REFERENCED_TABLE_SCHEMA = "%s";',
     ],
 ];

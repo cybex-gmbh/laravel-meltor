@@ -2,11 +2,13 @@
 
 namespace Meltor\Commands;
 
-use DateTime;
 use Exception;
 use Illuminate\Console\Command;
+use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Meltor;
+use Illuminate\Support\Facades\File;
+use Meltor\Meltor;
 
 class MeltorCommand extends Command
 {
@@ -16,6 +18,7 @@ class MeltorCommand extends Command
      * @var string
      */
     protected $signature = 'make:meltor
+                {--f|force   : Execute without confirmation. }
                 {--t|testrun : Perform a db structure comparison testrun (will drop and restore your db). }
                 {--r|restore : Restore the db backup from a previous run, stops after that. }
                 ';
@@ -25,30 +28,16 @@ class MeltorCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Creates one migration based on the current MySQL database';
+    protected $description = 'Create a new migration based on the current MySQL database';
 
     // Internals
-    protected string $beforeStructureFileName = '';
-    protected string $afterStructureFileName = '';
-    protected string $databaseName;
-    protected string $defaultConnection;
-    protected array $indexes;
+    protected array $indexes = [];
     protected bool $canAccessInnoDbIndexes = false;
-
-    /**
-     * Create a new command instance.
-     *
-     * @return void
-     */
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->beforeStructureFileName = storage_path(Meltor::getConfigValueForKey('testrun.beforeStructureFileName'));
-        $this->afterStructureFileName  = storage_path(Meltor::getConfigValueForKey('testrun.afterStructureFileName'));
-        $this->defaultConnection       = DB::getDefaultConnection();
-        $this->databaseName            = Meltor::getDatabaseName($this->defaultConnection);
-    }
+    protected string $databaseName = '';
+    protected ?ConnectionInterface $dataConnection;
+    protected ?ConnectionInterface $schemaConnection;
+    protected ?Collection $structure;
+    protected ?Meltor $meltor;
 
     /**
      * Execute the console command.
@@ -58,38 +47,53 @@ class MeltorCommand extends Command
      */
     public function handle(): int
     {
+        $this->meltor           = app('meltor');
+        $this->dataConnection   = DB::connection($this->meltor->config('connection.data'));
+        $this->databaseName     = $this->dataConnection->getDatabaseName();
+        $schemaConnectionName   = $this->meltor->config('connection.schema');
+
+        try {
+            $this->schemaConnection = DB::connection($schemaConnectionName);
+        }
+        catch (Exception $exception) {
+            $this->warn(sprintf('Please configure a database connection named %s that points to the information_schema database. See README.md.', $schemaConnectionName));
+            return 1;
+        }
+
         if ($this->option('restore')) {
             $this->restoreBackup();
 
             return 0;
         }
 
-        $this->newLn();
-        $this->line(sprintf('Meltor tries to consolidate all past migrations, based on the current local "%s" DB', $this->databaseName));
+        $this->newLine();
+        $this->line(sprintf('Meltor tries to consolidate all past migrations, based on this system\'s "%s" DB', $this->databaseName));
+        $this->line('Make sure all your systems have been deployed, and that this system has your current, production database structure.');
 
         if ($this->option('testrun')) {
-            $this->newLn();
+            $this->newLine();
             $this->line('Test run enabled');
-            $ready = $this->ask(
-                'Please confirm that you have deleted all old migrations, except ones that change framework or package created tables (y|N)'
-            );
+            if (!$this->option('force')) {
+                $ready = $this->ask(
+                    'Please confirm that you have deleted all old migrations, except ones that change framework or package created tables (y|N)'
+                );
 
-            if ($ready != 'y') {
-                $this->info('Aborting');
+                if ($ready != 'y') {
+                    $this->info('Aborting');
 
-                return 0;
+                    return 0;
+                }
             }
         }
 
-        $this->newLn();
-        $this->line(sprintf('Reading structure information from connection %s, database %s', $this->defaultConnection, $this->databaseName));
+        $this->newLine();
+        $this->line(sprintf('Reading structure information from connection %s, database %s', $this->meltor->config('connection.data'), $this->databaseName));
 
-        DB::setDefaultConnection('information_schema_mysql');
-
-        $structure         = Meltor::getDatabaseStructure($this->databaseName);
-        $uniqueKeys        = Meltor::getUniqueKeys($this->databaseName);
-        $foreignKeys       = Meltor::getForeignKeys($this->databaseName);
-        $innoDbIndexResult = Meltor::getIndexesFromInnoDb($this->databaseName);
+        $this->structure   = $this->meltor->getDatabaseStructure($this->databaseName, $this->schemaConnection);
+        $this->structure   = $this->meltor->getDatabaseStructure($this->databaseName, $this->schemaConnection);
+        $uniqueKeys        = $this->meltor->getUniqueKeys($this->databaseName, $this->schemaConnection);
+        $foreignKeys       = $this->meltor->getForeignKeys($this->databaseName, $this->schemaConnection);
+        $innoDbIndexResult = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection);
 
         if (is_array($innoDbIndexResult)) {
             $this->canAccessInnoDbIndexes = true;
@@ -99,38 +103,40 @@ class MeltorCommand extends Command
             $this->line('Instead reading indexes via Doctrine, this may change the order of the indexes within tables');
         }
 
-        DB::setDefaultConnection($this->defaultConnection);
-
         $tableMigrations      = [];
         $constraintMigrations = [];
 
-        foreach ($structure as $tableName => $columns) {
+        foreach ($this->structure as $tableName => $columns) {
+            if ($tableName === 'migrations') {
+                continue;
+            }
+
             $columnMigrations           = [];
             $columnConstraintMigrations = [];
 
             foreach ($columns->sortBy('ORDINAL_POSITION') as $column) {
-                $columnMigrations[] = Meltor::generateColumnMigration($column);
+                $columnMigrations[] = $this->meltor->generateColumnMigration($column);
             }
 
             foreach ($uniqueKeys->get($tableName) ?? [] as $uniqueKey) {
-                $columnMigrations[] = Meltor::generateUniqueKeyMigration($uniqueKey);
+                $columnMigrations[] = $this->meltor->generateUniqueKeyMigration($uniqueKey);
             }
 
-            foreach (Meltor::getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->indexes) as $indexKeyName => $indexKeyColumns) {
-                $columnMigrations[] = Meltor::generateIndexKeyMigration($indexKeyName, $indexKeyColumns);
+            foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->indexes, $this->dataConnection) as $indexKeyName => $indexKeyColumns) {
+                $columnMigrations[] = $this->meltor->generateIndexKeyMigration($indexKeyName, $indexKeyColumns);
             }
 
             foreach ($foreignKeys->get($tableName) ?? [] as $foreignKey) {
-                $columnConstraintMigrations[] = Meltor::generateForeignKeyMigration($foreignKey);
+                $columnConstraintMigrations[] = $this->meltor->generateForeignKeyMigration($foreignKey);
             }
 
             $tableMigrations[$tableName]      = $columnMigrations;
             $constraintMigrations[$tableName] = $columnConstraintMigrations;
         }
 
-        $migrationCode      = Meltor::generateMigration($tableMigrations, $constraintMigrations);
-        $migrationCode      = Meltor::beautify($migrationCode);
-        $migrationFilePath  = $this->writeMigration($migrationCode);
+        $migrationCode      = $this->meltor->generateMigration($tableMigrations, $constraintMigrations);
+        $migrationCode      = $this->meltor->beautify($migrationCode);
+        $migrationFilePath  = $this->writeMigration($migrationCode, $this->meltor->config('migration.name'));
         $showDisclaimerText = true;
 
         if ($this->option('testrun')) {
@@ -138,7 +144,7 @@ class MeltorCommand extends Command
         }
 
         if ($showDisclaimerText) {
-            $this->newLn();
+            $this->newLine();
             $this->line(
                 sprintf('Test and inspect "%s" to make sure the migration fits your requirements', $migrationFilePath)
             );
@@ -146,7 +152,7 @@ class MeltorCommand extends Command
             $this->warn('It may be necessary to keep migrations that alter tables created by frameworks or packages!');
         }
 
-        $this->newLn();
+        $this->newLine();
 
         return 0;
     }
@@ -161,39 +167,47 @@ class MeltorCommand extends Command
      */
     protected function testrun(): bool
     {
-        $success = false;
+        $success                 = false;
+        $beforeStructureFileName = $this->meltor->combinePath(
+            $this->meltor->config('testrun.folder'),
+            $this->meltor->config('testrun.beforeStructureFileName')
+        );
+        $afterStructureFileName  = $this->meltor->combinePath(
+            $this->meltor->config('testrun.folder'),
+            $this->meltor->config('testrun.afterStructureFileName')
+        );
 
-        $this->newLn();
+        // Reading existing database structure.
+        $this->newLine();
         $this->line('Performing structure comparison test run');
+        $this->writeStructureDump($beforeStructureFileName);
 
-        $this->newLn();
-        $this->line('Backing up database');
-        $this->call('protector:export', ['--file' => Meltor::getConfigValueForKey('testrun.backupFileName')]);
+        // Backup existing database.
+        $this->newLine();
+        $this->line('Backing up database before applying temporary changes');
+        $this->call('protector:export', ['--file' => $this->meltor->config('testrun.backupFileName')]);
 
-        $this->writeStructureDump($this->beforeStructureFileName);
-
-        $this->newLn();
+        // Try out new migration.
+        $this->newLine();
         $this->line('Running consolidated migration');
         $this->call('migrate:fresh', []);
 
-        $this->writeStructureDump($this->afterStructureFileName);
+        // Reading structure generated by the new migration.
+        $this->writeStructureDump($afterStructureFileName);
+
+        // Restore existing database.
         $this->restoreBackup();
 
+        // Compare both structures to make sure the new, consolidated migration does what all the previous ones did.
         $this->line('Comparing structure dumps');
 
-        $fileSizeBefore  = filesize($this->beforeStructureFileName);
-        $fileSizeAfter   = filesize($this->afterStructureFileName);
-        $beforeStructure = file_get_contents($this->beforeStructureFileName);
-        $afterStructure  = file_get_contents($this->afterStructureFileName);
-        $beforeStructure = Meltor::removeTimeStampFromDump($beforeStructure);
-        $afterStructure  = Meltor::removeTimeStampFromDump($afterStructure);
-        $beforeStructure = Meltor::removeRedundantCharSetFromDump($beforeStructure);
-        $afterStructure  = Meltor::removeRedundantCharSetFromDump($afterStructure);
+        $fileSizeBefore  = filesize($beforeStructureFileName);
+        $fileSizeAfter   = filesize($afterStructureFileName);
+        $beforeStructure = $this->meltor->readAndCleanStructure($beforeStructureFileName);
+        $afterStructure  = $this->meltor->readAndCleanStructure($afterStructureFileName);
 
-        $this->newLn();
-        $this->line('Removing redundant timestamp and CHARACTER SET info from structure files');
-        file_put_contents($this->beforeStructureFileName, $beforeStructure);
-        file_put_contents($this->afterStructureFileName, $afterStructure);
+        file_put_contents($beforeStructureFileName, $beforeStructure);
+        file_put_contents($afterStructureFileName, $afterStructure);
 
         if (!$fileSizeBefore || !$fileSizeAfter) {
             $this->warn('At least one structure file is empty, that\'s not good!');
@@ -205,13 +219,13 @@ class MeltorCommand extends Command
             $success = true;
         }
 
-        $this->line($this->beforeStructureFileName);
+        $this->line($beforeStructureFileName);
 
         if (!$fileSizeBefore) {
             $this->warn('Something went wrong, the before file is empty!');
         }
 
-        $this->line($this->afterStructureFileName);
+        $this->line($afterStructureFileName);
 
         if (!$fileSizeAfter) {
             $this->warn('Something went wrong, the after file is empty!');
@@ -221,58 +235,90 @@ class MeltorCommand extends Command
     }
 
     /**
-     * Writes the new migration into the migrations folder.
+     * Writes a new migration into the "migrations" folder.
      *
-     * Older Meltor migrations will be removed
+     * Older migrations with the same name will be removed
      * - in order to keep a current file name to run last
-     * - while not filling the migrations folder with each run
+     * - while not filling the "migrations" folder with each run
      *
      * Will return the name of the new migration file.
      *
-     * @param string $migrationCode
-     *
+     * @param string $migrationContent
+     * @param string $migrationName
+     * @param int $offset
      * @return string
      */
-    protected function writeMigration(string $migrationCode): string
+    protected function writeMigration(string $migrationContent, string $migrationName, int $offset = 0): string
     {
-        $migrationName       = 'meltor';
-        $filename            = sprintf('%s_%s.php', (new DateTime())->format('Y_m_d_His'), $migrationName);
-        $migrationFolder     = database_path('migrations');
-        $migrationFilePath   = sprintf('%s/%s', $migrationFolder, $filename);
-        $oldMigrationPattern = sprintf('%s/2022_??_??_??????_%s.php', $migrationFolder, $migrationName);
+        $filename          = sprintf('%s_%s.php', now()->addSeconds($offset)->format('Y_m_d_His'), $migrationName);
+        $migrationFilePath = $this->meltor->combinePath($this->meltor->config('migration.folder'), $filename);
 
-        foreach (glob($oldMigrationPattern) as $oldMeltorMigration) {
-            $this->warn(sprintf('Removing old migration "%s"', $oldMeltorMigration));
-            unlink($oldMeltorMigration);
-        }
+        $this->removeMigrations($migrationName);
 
         $this->info(sprintf('Generate new migration "%s"', $migrationFilePath));
-        file_put_contents($migrationFilePath, $migrationCode);
+        file_put_contents($migrationFilePath, $migrationContent);
 
         return $migrationFilePath;
     }
 
-    protected function restoreBackup()
+    /**
+     * Removes previously created migrations of a given name.
+     *
+     * @param string $migrationName
+     * @return void
+     */
+    protected function removeMigrations(string $migrationName): void
     {
-        $this->newLn();
-        $this->line('Restoring database backup');
-        $this->call('protector:import', ['--dump' => Meltor::getConfigValueForKey('testrun.backupFileName'), '--force' => true]);
-        $this->newLn();
+        $migrationFolder     = $this->meltor->config('migration.folder');
+        $oldMigrationPattern = sprintf('%s/????_??_??_??????_%s.php', $migrationFolder, $migrationName);
+
+        foreach (File::glob($oldMigrationPattern) as $oldMeltorMigration) {
+            $this->warn(sprintf('Removing old migration "%s"', $oldMeltorMigration));
+            File::delete($oldMeltorMigration);
+        }
     }
 
-    protected function writeStructureDump(string $fileName)
+    /**
+     * Restore the database to its prior state.
+     *
+     * To be used if something goes wrong during a testrun, where the database is being modified for comparison.
+     *
+     * @return void
+     */
+    protected function restoreBackup(): void
     {
-        $this->newLn();
+        $this->newLine();
+        $this->line('Restoring database backup');
+        $this->call('protector:import', ['--dump' => $this->meltor->config('testrun.backupFileName'), '--force' => true]);
+        $this->newLine();
+    }
+
+    /**
+     * Write a slightly simplified MySQL dump, intended only for structure comparisons.
+     *
+     * Does not contain data, excludes certain tables.
+     *
+     * @param string $fileName
+     * @return void
+     */
+    protected function writeStructureDump(string $fileName): void
+    {
+        $this->newLine();
         $this->line(sprintf('Backing up database structure for comparison: %s', $fileName));
         @unlink($fileName);
 
-        $connectionConfig = Meltor::getDatabaseConfig();
+        $connectionConfig = $this->meltor->getDatabaseConfig();
         $dumpOptions      = collect();
         $dumpOptions->push(sprintf('-h%s', escapeshellarg($connectionConfig['host'])));
         $dumpOptions->push(sprintf('-u%s', escapeshellarg($connectionConfig['username'])));
         $dumpOptions->push(sprintf('-p%s', escapeshellarg($connectionConfig['password'])));
         $dumpOptions->push('--no-data');
         $dumpOptions->push('--no-tablespaces');
+
+        foreach ($this->meltor->config('testrun.excludedTables') ?? [] as $excludedTable) {
+            $dumpOptions->push(escapeshellarg(sprintf('--ignore-table=%s.%s', $connectionConfig['database'], trim($excludedTable))));
+        }
+
         $dumpOptions->push(escapeshellarg($connectionConfig['database']));
 
         // See https://bugs.mysql.com/bug.php?id=20786
@@ -283,17 +329,5 @@ class MeltorCommand extends Command
                 $fileName
             )
         );
-    }
-
-    /**
-     * Prints a new line.
-     * Exists for compatibility reasons.
-     *
-     * @return void
-     */
-    protected function newLn()
-    {
-        // To be replaced with $this->newLine()
-        $this->line('');
     }
 }
