@@ -43,9 +43,9 @@ class Meltor
     /**
      * Returns the default database config.
      *
-     * @return Repository|bool
+     * @return mixed
      */
-    public function getDatabaseConfig()
+    public function getDatabaseConfig(): mixed
     {
         return config(
             sprintf(
@@ -129,10 +129,10 @@ class Meltor
      *
      * @param mixed $column
      *
-     * @return mixed
+     * @return string
      * @throws Exception
      */
-    protected function getDataType(mixed $column)
+    protected function getDataType(mixed $column): string
     {
         $columnType = $column->COLUMN_TYPE;
         $dataType   = $column->DATA_TYPE;
