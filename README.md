@@ -91,7 +91,7 @@ Exceptions:
 
 ## Credits
 
-- [Gael Connan](https://github.com/cybex)
+- [Cybex Web Development Team](https://github.com/cybex-gmbh)
 - [All Contributors](../../contributors)
 
 ## License
