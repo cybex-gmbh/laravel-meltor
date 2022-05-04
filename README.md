@@ -90,7 +90,7 @@ php artisan meltor:generate --restore
 
 ## Security
 
-If you discover any security related issues, please email gael.connan@cybex-online.com instead of using the issue
+If you discover any security related issues, please email webdevelopment@cybex-online.com instead of using the issue
 tracker.
 
 ## Style
