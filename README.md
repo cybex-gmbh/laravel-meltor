@@ -2,7 +2,7 @@
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/cybex/laravel-meltor.svg?style=flat-square)](https://packagist.org/packages/cybex/laravel-meltor)
 [![Total Downloads](https://img.shields.io/packagist/dt/cybex/laravel-meltor.svg?style=flat-square)](https://packagist.org/packages/cybex/laravel-meltor)
-![GitHub Actions](https://github.com/cybex/laravel-meltor/actions/workflows/main.yml/badge.svg)
+![GitHub Actions](https://github.com/cybex-gmbh/laravel-meltor/actions/workflows/main.yml/badge.svg)
 
 Attempts to consolidate all prior migrations into a single, new one. This is entirely based on the local MySQL database state,
 and not the prior migration files!
@@ -51,13 +51,12 @@ Configuring the root user to access the database is possible, but generally not 
 
 As this package intended to generate a new migration on a non-production system, there may be no need to commit this new connection.
 
-
 ## Usage
 
 To create a new migration file:
 
 ```php
-php artisan make:meltor
+php artisan meltor:generate
 ```
 
 To also do a comparison between the old and the new database:

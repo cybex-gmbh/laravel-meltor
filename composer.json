@@ -6,7 +6,7 @@
         "migrations",
         "migration"
     ],
-    "homepage": "https://github.com/cybex/laravel-meltor",
+    "homepage": "https://github.com/cybex-gmbh/laravel-meltor",
     "license": "MIT",
     "type": "library",
     "support": {
