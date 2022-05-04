@@ -62,7 +62,7 @@ php artisan meltor:generate
 To also do a comparison between the old and the new database:
 
 ```php
-php artisan make:meltor --testrun
+php artisan meltor:generate --testrun
 ```
 
 Notes:
