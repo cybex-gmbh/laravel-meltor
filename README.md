@@ -59,6 +59,14 @@ To create a new migration file:
 php artisan meltor:generate
 ```
 
+Notes:
+
+- You may need to give your mysql user additional permissions. It is possible, but generally not recommended to use the root user.
+- You may need to keep migrations which alter tables created by the framework or packages
+- Laravel will create a DOUBLE instead of a FLOAT when using Blueprint's $table->float()
+
+### Test run
+
 To also do a comparison between the old and the new database:
 
 ```php
@@ -68,13 +76,19 @@ php artisan meltor:generate --testrun
 Notes:
 
 - Delete all old migrations before starting the test run
-- You may need to give your mysql user additional permissions. It is possible, but generally not recommended to use the root user. 
-- You may need to keep migrations which alter tables created by the framework or packages
-- This command will need to modify your local database, but also restore it afterwards (the backup file will be put into
-  the storage folder)
-- Laravel will create a DOUBLE instead of a FLOAT when using Blueprint's $table->float()  
+- This command will need to modify your local database, but will also restore it afterwards
 
-### Security
+### Recovery
+
+This package uses the laravel-protector package to back up your database during the test run.
+The backup file is in the default protector folder, by default `storage/app/protector/meltorTestrunBackup.sql`.
+
+In case the `artisan meltor:generate --testrun` command has crashed, you can restore you can restore the previous DB state:
+```php
+php artisan meltor:generate --restore
+```
+
+## Security
 
 If you discover any security related issues, please email gael.connan@cybex-online.com instead of using the issue
 tracker.
