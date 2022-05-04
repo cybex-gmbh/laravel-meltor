@@ -4,6 +4,7 @@ namespace Meltor;
 
 use Meltor\Commands\MeltorCommand;
 use Illuminate\Support\ServiceProvider;
+use Meltor\Commands\TestMigrationCommand;
 
 class MeltorServiceProvider extends ServiceProvider
 {
@@ -28,7 +29,8 @@ class MeltorServiceProvider extends ServiceProvider
 
             // Registering package commands.
             $this->commands([
-                MeltorCommand::class
+                MeltorCommand::class,
+                TestMigrationCommand::class,
             ]);
         }
     }

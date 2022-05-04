@@ -4,10 +4,11 @@ namespace Meltor;
 
 use DateTime;
 use Exception;
-use Illuminate\Config\Repository;
+use Illuminate\Console\Command;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\File;
 
 class Meltor
 {
@@ -331,7 +332,7 @@ class Meltor
      *
      * @return string
      */
-    public function generateMigration(array $tableMigrations, array $constraintMigrations): string
+    public function generateMigration(array $tableMigrations, string $comment, array $constraintMigrations = []): string
     {
         $tableMigrationCode = [];
 
@@ -356,7 +357,7 @@ class Meltor
             $constraints = implode('', $constraintMigrationCode);
         }
 
-        return sprintf($this->getMigrationTemplate('migration'), (new DateTime())->format('Y-m-d H:i:s'), $tables, $constraints);
+        return sprintf($this->getMigrationTemplate('migration'), (new DateTime())->format('Y-m-d H:i:s'), $comment, $tables, $constraints);
     }
 
     /**
@@ -578,5 +579,105 @@ class Meltor
         $structure = $this->removeRedundantCharSetFromDump($structure);
 
         return $structure;
+    }
+
+    /**
+     * Writes a new migration into the "migrations" folder.
+     *
+     * Older migrations with the same name will be removed
+     * - in order to keep a current file name to run last
+     * - while not filling the "migrations" folder with each run
+     *
+     * Will return the name of the new migration file.
+     *
+     * @param string $migrationContent
+     * @param string $migrationName
+     * @param int $offset Seconds to add to the file name date
+     * @param Command|null $command Used for shell output
+     * @return string
+     */
+    public function writeMigration(string $migrationContent, string $migrationName, Command $command = null, int $offset = 0): string
+    {
+        $filename          = sprintf('%s_%s.php', now()->addSeconds($offset)->format('Y_m_d_His'), $migrationName);
+        $migrationFilePath = $this->combinePath($this->config('migration.folder'), $filename);
+
+        $this->removeMigrations($migrationName, $command);
+        $command?->info(sprintf('Generate new migration "%s"', $migrationFilePath));
+        file_put_contents($migrationFilePath, $migrationContent);
+
+        return $migrationFilePath;
+    }
+
+    /**
+     * Removes previously created migrations of a given name.
+     *
+     * @param string $migrationName
+     * @param Command|null $command Used for shell output
+     * @return void
+     */
+    public function removeMigrations(string $migrationName, Command $command = null): void
+    {
+        $migrationFolder     = $this->config('migration.folder');
+        $oldMigrationPattern = sprintf('%s/????_??_??_??????_%s.php', $migrationFolder, $migrationName);
+
+        foreach (File::glob($oldMigrationPattern) as $oldMeltorMigration) {
+            $command?->warn(sprintf('Removing old migration "%s"', $oldMeltorMigration));
+            File::delete($oldMeltorMigration);
+        }
+    }
+
+    /**
+     * Restore the database to its prior state.
+     *
+     * To be used if something goes wrong during a testrun, where the database is being modified for comparison.
+     *
+     * @param Command|null $command Used for shell output
+     * @return void
+     */
+    public function restoreBackup(Command $command = null): void
+    {
+        $command?->newLine();
+        $command?->line('Restoring database backup');
+        $command?->call('protector:import', ['--dump' => $this->config('testrun.backupFileName'), '--force' => true]);
+        $command?->newLine();
+    }
+
+    /**
+     * Write a slightly simplified MySQL dump, intended only for structure comparisons.
+     *
+     * Does not contain data, excludes certain tables.
+     *
+     * @param string $fileName
+     * @param Command|null $command Used for shell output
+     * @return void
+     */
+    public function writeStructureDump(string $fileName, Command $command = null): void
+    {
+        $command?->newLine();
+        $command?->line(sprintf('Backing up database structure for comparison: %s', $fileName));
+        @unlink($fileName);
+
+        $connectionConfig = $this->getDatabaseConfig();
+        $dumpOptions      = collect();
+        $dumpOptions->push(sprintf('-h%s', escapeshellarg($connectionConfig['host'])));
+        $dumpOptions->push(sprintf('-u%s', escapeshellarg($connectionConfig['username'])));
+        $dumpOptions->push(sprintf('-p%s', escapeshellarg($connectionConfig['password'])));
+        $dumpOptions->push('--no-data');
+        $dumpOptions->push('--no-tablespaces');
+
+        foreach ($this->config('testrun.excludedTables') ?? [] as $excludedTable) {
+            $dumpOptions->push(escapeshellarg(sprintf('--ignore-table=%s.%s', $connectionConfig['database'], trim($excludedTable))));
+        }
+
+        $dumpOptions->push(escapeshellarg($connectionConfig['database']));
+
+        // See https://bugs.mysql.com/bug.php?id=20786
+        exec(
+            sprintf(
+                'mysqldump %s | sed --expression="s/ AUTO_INCREMENT=[0-9]\+//" > %s 2> /dev/null',
+                $dumpOptions->implode(' '),
+                $fileName
+            )
+        );
     }
 }

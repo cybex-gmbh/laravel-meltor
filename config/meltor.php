@@ -17,14 +17,14 @@ return [
     'migration' => [
 
         // Filename of the new, generated migration.
-        'name' => 'meltor',
+        'name'   => 'meltor',
 
         // Folder where the migrations will be placed.
         'folder' => fn() => database_path('migrations'),
     ],
 
     // The test run option applies the new migration, and compares the resulting DB structure
-    'testrun' => [
+    'testrun'   => [
 
         // This is where the database will be backup up and automatically restored from.
         'backupFileName'          => 'meltorTestrunBackup.sql',
@@ -34,10 +34,10 @@ return [
         'afterStructureFileName'  => 'meltorStructureAfter.sql',
 
         // Folder where the comparison files will be placed.
-        'folder' => fn() => storage_path(),
+        'folder'                  => fn() => storage_path(),
 
         // Tables excluded from comparison.
-        'excludedTables' => [
+        'excludedTables'          => [
             'migrations',
             'job_batches',
             'personal_access_tokens',
@@ -45,23 +45,98 @@ return [
     ],
 
     // MySQL data types are being converted to Laravel fluent ones.
-    'mysql'   => [
+    'mysql'     => [
         // https://laravel.com/docs/9.x/migrations#available-column-types
         'fluentDataTypes' => [
-            'bigint'     => 'bigInteger',
+
+            // Numeric - Integer
+            // https://dev.mysql.com/doc/refman/8.0/en/integer-types.html
+            'tinyint'         => 'tinyInteger',
             // Note that tinyint(1) is being handled separately.
-            'boolean'    => 'boolean',
-            'char'       => 'char',
-            'date'       => 'date',
-            'int'        => 'integer',
-            'json'       => 'json',
-            'longtext'   => 'longText',
-            'mediumtext' => 'mediumText',
-            'text'       => 'text',
-            'time'       => 'time',
-            'timestamp'  => 'timestamp',
-            'tinyint'    => 'tinyInteger',
-            'varchar'    => 'string',
+            'boolean'         => 'boolean',
+            'bigint'          => 'bigInteger',
+            'mediumint'       => 'mediumInteger',
+            'smallint'        => 'smallInteger',
+            'int'             => 'integer',
+
+            // Numeric - Fixed-Point
+            // https://dev.mysql.com/doc/refman/8.0/en/fixed-point-types.html
+            'decimal'         => 'decimal',
+            // not supported by Laravel:
+            // numeric
+
+            // Numeric - Floating-Point
+            // https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
+            'float'           => 'float',
+            'double'          => 'double',
+
+            // Numeric - Bit
+            // https://dev.mysql.com/doc/refman/8.0/en/bit-type.html
+            // not supported by Laravel:
+            // bit
+
+            // Numeric - Datetime
+            // https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+            'date'            => 'date',
+            'timestamp'       => 'timestamp',
+            'datetime'        => 'dateTime',
+
+            // Numeric - Time
+            // https://dev.mysql.com/doc/refman/8.0/en/time.html
+            'time'            => 'time',
+
+            // Numeric - Year
+            // https://dev.mysql.com/doc/refman/8.0/en/year.html
+            'year'            => 'year',
+
+            // String - Character
+            // https://dev.mysql.com/doc/refman/8.0/en/char.html
+            'char'            => 'char',
+            'varchar'         => 'string',
+
+            // String - Binary
+            // https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
+            // not supported by Laravel:
+            // binary
+            // varbinary
+
+            // String - Blob
+            // https://dev.mysql.com/doc/refman/8.0/en/blob.html
+            'tinytext'        => 'tinyText',
+            'mediumtext'      => 'mediumText',
+            'text'            => 'text',
+            'longtext'        => 'longText',
+            'blob'            => 'binary',
+            // not supported by Laravel:
+            // tinyblob
+            // mediumblob
+            // longblob
+
+            // String - Enum
+            // https://dev.mysql.com/doc/refman/8.0/en/enum.html
+            // Currently not supported by this package:
+            // enum
+
+            // String - Set
+            // https://dev.mysql.com/doc/refman/8.0/en/set.html
+            // Currently not supported by this package:
+            // set
+
+            // Spatial
+            // https://dev.mysql.com/doc/refman/8.0/en/spatial-type-overview.html
+            'geometry'        => 'geometry',
+            'point'           => 'point',
+            'linestring'      => 'lineString',
+            'polygon'         => 'polygon',
+            'multipoint'      => 'multiPoint',
+            'multilinestring' => 'multiLineString',
+            'multipolygon'    => 'multiPolygon',
+            // Currently not supported by this package:
+            // geomcollection
+
+            // JSON
+            // https://dev.mysql.com/doc/refman/8.0/en/json.html
+            'json'            => 'json',
         ],
 
         'fluentIntegerTypes' => [

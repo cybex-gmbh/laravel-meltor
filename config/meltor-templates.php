@@ -4,6 +4,11 @@ return [
 
     // These templates are the base for the generated migration file.
 
+    'migrationComment' => 'This Migration sums up the database structure for all past Migrations.
+     *
+     * On migrate:fresh, framework and package tables will not be changed if they exist when this runs!
+     * Be sure to keep migration files which alter these!',
+
     // The main migration file.
     'migration' => '<?php
 
@@ -14,10 +19,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * This Migration sums up the database structure for all past Migrations up to %s.
-     *
-     * On migrate:fresh, framework and package tables will not be changed if they exist when this runs!
-     * Be sure to keep migration files which alter these!
+     * %s: %s
      *
      * @return void
      */

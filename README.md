@@ -73,6 +73,7 @@ Notes:
 - You may need to keep migrations which alter tables created by the framework or packages
 - This command will need to modify your local database, but also restore it afterwards (the backup file will be put into
   the storage folder)
+- Laravel will create a DOUBLE instead of a FLOAT when using Blueprint's $table->float()  
 
 ### Security
 
