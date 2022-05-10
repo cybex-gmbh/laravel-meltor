@@ -31,6 +31,7 @@ class MeltorCommand extends Command
 
     // Internals
     protected array $indexes = [];
+    protected array $spatialIndexes = [];
     protected bool $canAccessInnoDbIndexes = false;
     protected bool $warnAboutFloat = false;
     protected string $databaseName = '';
@@ -47,15 +48,14 @@ class MeltorCommand extends Command
      */
     public function handle(): int
     {
-        $this->meltor           = app('meltor');
-        $this->dataConnection   = DB::connection($this->meltor->config('connection.data'));
-        $this->databaseName     = $this->dataConnection->getDatabaseName();
-        $schemaConnectionName   = $this->meltor->config('connection.schema');
+        $this->meltor         = app('meltor');
+        $this->dataConnection = DB::connection($this->meltor->config('connection.data'));
+        $this->databaseName   = $this->dataConnection->getDatabaseName();
+        $schemaConnectionName = $this->meltor->config('connection.schema');
 
         try {
             $this->schemaConnection = DB::connection($schemaConnectionName);
-        }
-        catch (Exception $exception) {
+        } catch (Exception $exception) {
             $this->warn(sprintf('Please configure a database connection named %s that points to the information_schema database. See README.md.', $schemaConnectionName));
             return 1;
         }
@@ -93,24 +93,21 @@ class MeltorCommand extends Command
         $this->structure   = $this->meltor->getDatabaseStructure($this->databaseName, $this->schemaConnection);
         $uniqueKeys        = $this->meltor->getUniqueKeys($this->databaseName, $this->schemaConnection);
         $foreignKeys       = $this->meltor->getForeignKeys($this->databaseName, $this->schemaConnection);
-        $innoDbIndexResult = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection);
+        $innoDbIndexResult = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection, 0);
 
         if (is_array($innoDbIndexResult)) {
             $this->canAccessInnoDbIndexes = true;
             $this->indexes                = $innoDbIndexResult;
+            $this->spatialIndexes         = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection, 64);
         } else {
             $this->warn(sprintf('Could not read indexes via information_schema: %s', $innoDbIndexResult));
-            $this->line('Instead reading indexes via Doctrine, this may change the order of the indexes within tables');
+            $this->line('Instead reading indexes via Doctrine, may be missing details. See README.md.');
         }
 
         $tableMigrations      = [];
         $constraintMigrations = [];
 
         foreach ($this->structure as $tableName => $columns) {
-            if ($tableName === 'migrations') {
-                continue;
-            }
-
             $columnMigrations           = [];
             $columnConstraintMigrations = [];
 
@@ -122,14 +119,22 @@ class MeltorCommand extends Command
                 $columnMigrations[] = $this->meltor->generateColumnMigration($column);
             }
 
+            // Unique Keys.
             foreach ($uniqueKeys->get($tableName) ?? [] as $uniqueKey) {
                 $columnMigrations[] = $this->meltor->generateUniqueKeyMigration($uniqueKey);
             }
 
-            foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->indexes, $this->dataConnection) as $indexKeyName => $indexKeyColumns) {
+            // Index Keys.
+            foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->indexes, $this->dataConnection, true) as $indexKeyName => $indexKeyColumns) {
                 $columnMigrations[] = $this->meltor->generateIndexKeyMigration($indexKeyName, $indexKeyColumns);
             }
 
+            // Spatial Keys.
+            foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->spatialIndexes, $this->dataConnection, false) as $indexKeyName => $indexKeyColumns) {
+                $columnMigrations[] = $this->meltor->generateIndexKeyMigration($indexKeyName, $indexKeyColumns, true);
+            }
+
+            // Foreign Keys.
             foreach ($foreignKeys->get($tableName) ?? [] as $foreignKey) {
                 $columnConstraintMigrations[] = $this->meltor->generateForeignKeyMigration($foreignKey);
             }

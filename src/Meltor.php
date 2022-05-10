@@ -238,9 +238,10 @@ class Meltor
      *
      * @param string $databaseName
      * @param ConnectionInterface $connection
+     * @param int $indexType
      * @return array|string
      */
-    public function getIndexesFromInnoDb(string $databaseName, ConnectionInterface $connection): array|string
+    public function getIndexesFromInnoDb(string $databaseName, ConnectionInterface $connection, int $indexType): array|string
     {
         try {
             $dbIndexes = $connection->table('INNODB_TABLES AS table')
@@ -255,7 +256,7 @@ class Meltor
                            ->join('INNODB_INDEXES AS index', 'table.TABLE_ID', '=', 'index.TABLE_ID')
                            ->join('INNODB_FIELDS AS field', 'index.INDEX_ID', '=', 'field.INDEX_ID')
                            ->where('table.NAME', 'LIKE', sprintf('%s/%%', $databaseName))
-                           ->where('index.TYPE', '=', 0)
+                           ->where('index.TYPE', '=', $indexType)
                            ->get();
 
             $indexes = $dbIndexes->map(function ($item) {
@@ -278,9 +279,10 @@ class Meltor
      * @param $canAccessInnoDbIndexes
      * @param $indexes
      * @param ConnectionInterface $connection
+     * @param bool $allowDoctrine
      * @return Collection
      */
-    public function getIndexesFor(string $tableName, $canAccessInnoDbIndexes, $indexes, ConnectionInterface $connection): Collection
+    public function getIndexesFor(string $tableName, $canAccessInnoDbIndexes, $indexes, ConnectionInterface $connection, bool $allowDoctrine = false): Collection
     {
         if ($canAccessInnoDbIndexes) {
             $cachedIndexes = $indexes[$tableName] ?? [];
@@ -298,6 +300,10 @@ class Meltor
             }
 
             return $indexes;
+        }
+
+        if (!$allowDoctrine) {
+            return collect();
         }
 
         return collect(
@@ -383,14 +389,15 @@ class Meltor
         $onUpdateTime  = str_contains($column->EXTRA, 'on update CURRENT_TIMESTAMP');
         $autoIncrement = $extra === 'auto_increment';
         $displayWidth  = $this->getDisplayWidth($column);
+        $srsId         = $column->SRS_ID ?? null;
         $parts         = [];
 
         if ($columnName === 'id' && $dataType === 'bigint' && $unsigned && $autoIncrement) {
             return sprintf($this->getMigrationTemplate('column'), 'id()');
         }
 
-        if ($displayWidth) {
-            $parts[] = sprintf('%s(\'%s\', %d)', $this->config('mysql.fluentDataTypes')[$dataType], $columnName, $displayWidth);
+        if ($srsId || $displayWidth) {
+            $parts[] = sprintf('%s(\'%s\', %d)', $this->config('mysql.fluentDataTypes')[$dataType], $columnName, $srsId ?? $displayWidth);
         } else {
             $parts[] = sprintf('%s(\'%s\')', $this->config('mysql.fluentDataTypes')[$dataType], $columnName);
         }
@@ -453,17 +460,18 @@ class Meltor
      *
      * @param string $keyName
      * @param array $columns
-     *
+     * @param bool $isSpatialIndex
      * @return string
      */
-    public function generateIndexKeyMigration(string $keyName, array $columns): string
+    public function generateIndexKeyMigration(string $keyName, array $columns, bool $isSpatialIndex = false): string
     {
         $columnsString = count($columns) > 1 ? sprintf('[\'%s\']', implode('\', \'', $columns)) : sprintf(
             '\'%s\'',
             $columns[0]
         );
+        $methodName = $isSpatialIndex ? 'spatialIndex' : 'index';
 
-        return sprintf($this->getMigrationTemplate('column'), sprintf('index(%s, \'%s\')', $columnsString, $keyName));
+        return sprintf($this->getMigrationTemplate('column'), sprintf('%s(%s, \'%s\')', $methodName, $columnsString, $keyName));
     }
 
     /**

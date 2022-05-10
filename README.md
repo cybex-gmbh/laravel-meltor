@@ -12,7 +12,8 @@ Before you start
 - Make sure that you have put your local MySQL DB into the correct state!
 - Disable all development packages that change the structure of your database!
 
-When you have reviewed and tested the new migration, you can commit the new migration and the deletion of the old migrations.
+When you have reviewed, tested and possibly fixed missing details of the new migration, you can commit the new migration and the deletion of the old migrations.
+You may need to keep migrations which alter tables created by the framework or packages.
 
 ## Installation
 
@@ -46,10 +47,19 @@ For example
   ],
 ```
 
+As this package intended to generate a new migration on a non-production system, there may be no need to commit this new connection.
+
+#### Permissions
+
 Make sure that your local database user has sufficient permissions to access the information_schema db.
 Configuring the root user to access the database is possible, but generally not recommended for multiple reasons.
 
-As this package intended to generate a new migration on a non-production system, there may be no need to commit this new connection.
+This package will fall back to Doctrine to read indexes if the permissions are insufficient.
+This leads to the following deviations in the new, generated migration:
+
+- Spatial indexes will be left out
+- The index order within tables may differ
+
 
 ## Usage
 
