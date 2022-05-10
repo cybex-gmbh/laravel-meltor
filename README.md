@@ -51,14 +51,14 @@ As this package intended to generate a new migration on a non-production system,
 
 #### Permissions
 
-Make sure that your local database user has sufficient permissions to access the information_schema db.
-Configuring the root user to access the database is possible, but generally not recommended for multiple reasons.
-
-This package will fall back to Doctrine to read indexes if the permissions are insufficient.
-This leads to the following deviations in the new, generated migration:
+Make sure that your local database user has sufficient permissions to access all tables of the mysql information_schema db.
+If the permissions are insufficient, this package will use Doctrine though PHP, instead of reading from the according mysql information_schema tables.
+The fallback to Doctrine leads to the following deviations in the new, generated migration:
 
 - Spatial indexes will be left out
 - The index order within tables may differ
+
+Configuring the root user to access the database with sufficient permissions is possible, but generally not recommended for multiple reasons.
 
 
 ## Usage
