@@ -133,8 +133,8 @@ class Meltor
      * Extract the MySQL DATA_TYPE column property and check it.
      *
      * @param mixed $column
-     *
-     * @return string
+     * @param bool $ignoreProblems
+     * @return string|null
      * @throws Exception
      */
     protected function getDataType(mixed $column, bool $ignoreProblems = false): ?string
@@ -342,6 +342,7 @@ class Meltor
      * Returns the content of a Laravel migration file.
      *
      * @param array $tableMigrations
+     * @param string $comment
      * @param array $constraintMigrations
      *
      * @return string
@@ -387,8 +388,8 @@ class Meltor
      * Describes one MySQL Column in Fluent.
      *
      * @param object $column
-     *
-     * @return string
+     * @param bool $ignoreProblems
+     * @return string|null
      * @throws Exception
      */
     public function generateColumnMigration(object $column, bool $ignoreProblems = false): ?string
@@ -400,7 +401,7 @@ class Meltor
         $comment      = $column->COLUMN_COMMENT;
         $dataType     = $this->getDataType($column, $ignoreProblems);
 
-        // When the ignore problems option is set, some data types are not being processed.
+        // When the --ignoreProblems option is set, some data types are not being processed.
         if (is_null($dataType)) {
             return '';
         }

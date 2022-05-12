@@ -20,7 +20,7 @@ class TestMigrationCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Create a test migration with all data types. Only for testing purposes.';
+    protected $description = 'Create a test migration with all supported data types. Only for testing purposes.';
 
     protected ?Meltor $meltor;
 
