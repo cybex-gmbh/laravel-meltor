@@ -7,6 +7,11 @@
 Attempts to consolidate all prior migrations into a single, new one. This is entirely based on the local MySQL database state,
 and not the prior migration files!
 
+This can make sense when
+- migrations need to be removed because they are no longer compatible with your codebase
+- the amount of migration files slows down your testing workflow
+- changes in migrations are hard to look up anyway because tables get changed many times
+
 Before you start
 
 - Make sure that you have put your local MySQL DB into the correct state!
@@ -52,7 +57,7 @@ As this package intended to generate a new migration on a non-production system,
 #### Permissions
 
 Make sure that your local database user has sufficient permissions to access all tables of the mysql information_schema db.
-If the permissions are insufficient, this package will use Doctrine though PHP, instead of reading from the according mysql information_schema tables.
+If the permissions are insufficient, this package will use Doctrine through PHP, instead of reading from the according mysql information_schema tables.
 The fallback to Doctrine leads to the following deviations in the new, generated migration:
 
 - Spatial indexes will be left out
@@ -97,6 +102,19 @@ In case the `artisan meltor:generate --testrun` command has crashed, you can res
 ```php
 php artisan meltor:generate --restore
 ```
+
+### Problems
+
+This package will abort when it cannot replicate the database into a migration file. If you want to proceed anyway, use the `--ignoreProblems` option.
+There will be warning messages informing you about table columns and indexes that have not been transferred.
+
+#### Foreign keys
+
+The db statement `FOREIGN_KEY_CHECKS=0` that is automatically added to the resulting migration file should make it possible to add all foreign keys 
+right when creating a new table. This also makes the migration easier to read because everything is in one place.
+Should this fail to work with your version of MySQL, or should you prefer not to use this db statement, you can use the `--separateForeignKeys` to move all foreign 
+key declarations to the end of the migration file, which separates the table declarations and their order from the dependencies and the order in which foreign keys
+have to be created.
 
 ## Security
 

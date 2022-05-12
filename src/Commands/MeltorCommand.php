@@ -17,9 +17,11 @@ class MeltorCommand extends Command
      * @var string
      */
     protected $signature = 'meltor:generate
-                {--f|force   : Execute without confirmation. }
-                {--t|testrun : Perform a db structure comparison testrun (will need to drop and restore your DB). }
-                {--r|restore : Restore the db backup from a previous run, stops after that. }
+                {--f|force               : Execute without confirmation. }
+                {--i|ignoreProblems      : Leave out structures that cannot be processed. }
+                {--s|separateForeignKeys : Put foreign keys at the end of the file. Avoids problems with constraint checks. }
+                {--t|testrun             : Perform a db structure comparison testrun (will need to drop and restore your DB). }
+                {--r|restore             : Restore the db backup from a previous run, stops after that. }
                 ';
 
     /**
@@ -31,9 +33,12 @@ class MeltorCommand extends Command
 
     // Internals
     protected array $indexes = [];
+    protected array $problems = [];
     protected array $spatialIndexes = [];
     protected bool $canAccessInnoDbIndexes = false;
+    protected bool $ignoreProblems = false;
     protected bool $warnAboutFloat = false;
+    protected bool $separateForeignKeys = false;
     protected string $databaseName = '';
     protected ?ConnectionInterface $dataConnection;
     protected ?ConnectionInterface $schemaConnection;
@@ -48,10 +53,12 @@ class MeltorCommand extends Command
      */
     public function handle(): int
     {
-        $this->meltor         = app('meltor');
-        $this->dataConnection = DB::connection($this->meltor->config('connection.data'));
-        $this->databaseName   = $this->dataConnection->getDatabaseName();
-        $schemaConnectionName = $this->meltor->config('connection.schema');
+        $this->meltor              = app('meltor');
+        $this->ignoreProblems      = $this->option('ignoreProblems');
+        $this->separateForeignKeys = $this->option('separateForeignKeys');
+        $this->dataConnection      = DB::connection($this->meltor->config('connection.data'));
+        $this->databaseName        = $this->dataConnection->getDatabaseName();
+        $schemaConnectionName      = $this->meltor->config('connection.schema');
 
         try {
             $this->schemaConnection = DB::connection($schemaConnectionName);
@@ -116,12 +123,19 @@ class MeltorCommand extends Command
                     $this->warnAboutFloat = true;
                 }
 
-                $columnMigrations[] = $this->meltor->generateColumnMigration($column);
+                $columnMigration = $this->meltor->generateColumnMigration($column, $this->ignoreProblems);
+
+                if (!$columnMigration) {
+                    $this->problems['nonGeneratedColumns'][$tableName][] = $column->COLUMN_NAME;
+                    $this->error(sprintf('Column "%s.%s" of type %s could not be generated', $tableName, $column->COLUMN_NAME, $column->DATA_TYPE));
+                } else {
+                    $columnMigrations[] = $columnMigration;
+                }
             }
 
             // Unique Keys.
             foreach ($uniqueKeys->get($tableName) ?? [] as $uniqueKey) {
-                $columnMigrations[] = $this->meltor->generateUniqueKeyMigration($uniqueKey);
+                $columnMigrations[] = $this->meltor->generateUniqueKeyMigration($uniqueKey, $this->problems['nonGeneratedColumns'] ?? [], $this);
             }
 
             // Index Keys.
@@ -130,17 +144,33 @@ class MeltorCommand extends Command
             }
 
             // Spatial Keys.
-            foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->spatialIndexes, $this->dataConnection, false) as $indexKeyName => $indexKeyColumns) {
+            foreach (
+                $this->meltor->getIndexesFor(
+                    $tableName,
+                    $this->canAccessInnoDbIndexes,
+                    $this->spatialIndexes,
+                    $this->dataConnection,
+                    false
+                ) as $indexKeyName => $indexKeyColumns
+            ) {
                 $columnMigrations[] = $this->meltor->generateIndexKeyMigration($indexKeyName, $indexKeyColumns, true);
             }
 
             // Foreign Keys.
-            foreach ($foreignKeys->get($tableName) ?? [] as $foreignKey) {
-                $columnConstraintMigrations[] = $this->meltor->generateForeignKeyMigration($foreignKey);
+            foreach ($foreignKeys->get($tableName)?->groupBy('CONSTRAINT_NAME') ?? [] as $foreignKey) {
+                $foreignKeyMigration = $this->meltor->generateForeignKeyMigration($foreignKey, $this->ignoreProblems, $this);
+                if ($this->separateForeignKeys) {
+                    $columnConstraintMigrations[] = $foreignKeyMigration;
+                } else {
+                    $columnMigrations[] = $foreignKeyMigration;
+                }
             }
 
-            $tableMigrations[$tableName]      = $columnMigrations;
-            $constraintMigrations[$tableName] = $columnConstraintMigrations;
+            $tableMigrations[$tableName] = $columnMigrations;
+
+            if ($this->separateForeignKeys) {
+                $constraintMigrations[$tableName] = $columnConstraintMigrations;
+            }
         }
 
         $migrationCode      = $this->meltor->generateMigration($tableMigrations, $this->meltor->getMigrationTemplate('migrationComment'), $constraintMigrations);

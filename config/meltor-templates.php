@@ -14,6 +14,7 @@ return [
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -25,12 +26,17 @@ return new class extends Migration
      */
     public function up()
     {
+        DB::statement(\'/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;\');
+        DB::statement(\'/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE="NO_AUTO_VALUE_ON_ZERO" */;\');
+    
         // Tables:
         %s
 
-
-        // Foreign Keys:
         %s
+        %s
+        
+        DB::statement(\'/*!40101 SET SQL_MODE=IFNULL(@OLD_SQL_MODE, "") */;\');
+        DB::statement(\'/*!40014 SET FOREIGN_KEY_CHECKS=IF(@OLD_FOREIGN_KEY_CHECKS IS NULL, 1, @OLD_FOREIGN_KEY_CHECKS) */;\');
     }
 };
 ',

@@ -83,6 +83,7 @@ class Meltor
                     stat.TABLE_NAME, 
                     stat.INDEX_NAME, 
                     GROUP_CONCAT(stat.COLUMN_NAME ORDER BY stat.seq_in_index separator ", ") AS columns, 
+	                GROUP_CONCAT(IFNULL(stat.SUB_PART, "NULL") ORDER BY stat.seq_in_index separator ", ") AS lengths, 
                     constraints.CONSTRAINT_TYPE
                 FROM information_schema.STATISTICS stat
                      JOIN information_schema.table_constraints constraints
@@ -114,13 +115,16 @@ class Meltor
      */
     public function getForeignKeys(string $databaseName, ConnectionInterface $connection): Collection
     {
-        $query = 'SELECT TABLE_NAME,
-                       COLUMN_NAME,
-                       CONSTRAINT_NAME,
-                       REFERENCED_TABLE_NAME,
-                       REFERENCED_COLUMN_NAME
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE REFERENCED_TABLE_SCHEMA = "%s";';
+        $query = 'SELECT 
+                    `usages`.`TABLE_NAME`,
+                    `usages`.`COLUMN_NAME`,
+                    `usages`.`CONSTRAINT_NAME`,
+                    `usages`.`REFERENCED_TABLE_NAME`, 
+                    `usages`.`REFERENCED_COLUMN_NAME`, 
+                    `foreigns`.`TYPE`
+                 FROM `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` AS `usages` 
+                 INNER JOIN `INNODB_FOREIGN` AS `foreigns` ON `foreigns`.`ID` = CONCAT(`usages`.`CONSTRAINT_SCHEMA`, "/", `usages`.`CONSTRAINT_NAME`) 
+                 WHERE `usages`.`REFERENCED_TABLE_SCHEMA` = "%s";';
 
         return collect($connection->select(sprintf($query, $databaseName)))->groupBy('TABLE_NAME');
     }
@@ -133,7 +137,7 @@ class Meltor
      * @return string
      * @throws Exception
      */
-    protected function getDataType(mixed $column): string
+    protected function getDataType(mixed $column, bool $ignoreProblems = false): ?string
     {
         $columnType = $column->COLUMN_TYPE;
         $dataType   = $column->DATA_TYPE;
@@ -143,8 +147,12 @@ class Meltor
         }
 
         if (!array_key_exists($dataType, $this->config('mysql.fluentDataTypes'))) {
-            dump($column);
-            throw new Exception(sprintf('unknown DATA_TYPE value "%s"', $dataType));
+            if (!$ignoreProblems) {
+                dump($column);
+                throw new Exception(sprintf('unknown DATA_TYPE value "%s"', $dataType));
+            }
+
+            return null;
         }
 
         return $dataType;
@@ -245,19 +253,19 @@ class Meltor
     {
         try {
             $dbIndexes = $connection->table('INNODB_TABLES AS table')
-                           ->select(
-                               [
-                                   'table.NAME AS tableName',
-                                   'index.NAME AS indexName',
-                                   'field.NAME AS fieldName',
-                                   'field.POS AS fieldPosition',
-                               ]
-                           )
-                           ->join('INNODB_INDEXES AS index', 'table.TABLE_ID', '=', 'index.TABLE_ID')
-                           ->join('INNODB_FIELDS AS field', 'index.INDEX_ID', '=', 'field.INDEX_ID')
-                           ->where('table.NAME', 'LIKE', sprintf('%s/%%', $databaseName))
-                           ->where('index.TYPE', '=', $indexType)
-                           ->get();
+                ->select(
+                    [
+                        'table.NAME AS tableName',
+                        'index.NAME AS indexName',
+                        'field.NAME AS fieldName',
+                        'field.POS AS fieldPosition',
+                    ]
+                )
+                ->join('INNODB_INDEXES AS index', 'table.TABLE_ID', '=', 'index.TABLE_ID')
+                ->join('INNODB_FIELDS AS field', 'index.INDEX_ID', '=', 'field.INDEX_ID')
+                ->where('table.NAME', 'LIKE', sprintf('%s/%%', $databaseName))
+                ->where('index.TYPE', '=', $indexType)
+                ->get();
 
             $indexes = $dbIndexes->map(function ($item) {
                 $item->tableName = $this->stripDatabaseName($item->tableName);
@@ -347,10 +355,12 @@ class Meltor
             $tableMigrationCode[] = sprintf($this->getMigrationTemplate('createTable'), $tableName, $tableName, $columns);
         }
 
-        $tables      = implode('', $tableMigrationCode);
-        $constraints = '';
+        $tables           = implode('', $tableMigrationCode);
+        $constraintsTitle = '';
+        $constraints      = '';
 
         if (count($constraintMigrations)) {
+            $constraintsTitle        = '// Foreign Keys';
             $constraintMigrationCode = [];
 
             foreach ($constraintMigrations as $tableName => $columnConstraintMigrations) {
@@ -363,7 +373,14 @@ class Meltor
             $constraints = implode('', $constraintMigrationCode);
         }
 
-        return sprintf($this->getMigrationTemplate('migration'), (new DateTime())->format('Y-m-d H:i:s'), $comment, $tables, $constraints);
+        return sprintf(
+            $this->getMigrationTemplate('migration'),
+            (new DateTime())->format('Y-m-d H:i:s'),
+            $comment,
+            $tables,
+            $constraintsTitle,
+            $constraints
+        );
     }
 
     /**
@@ -374,14 +391,20 @@ class Meltor
      * @return string
      * @throws Exception
      */
-    public function generateColumnMigration(object $column): string
+    public function generateColumnMigration(object $column, bool $ignoreProblems = false): ?string
     {
-        $columnName    = $column->COLUMN_NAME;
-        $nullable      = $column->IS_NULLABLE === 'YES';
-        $characterSet  = $column->CHARACTER_SET_NAME;
-        $collation     = $column->COLLATION_NAME;
-        $comment       = $column->COLUMN_COMMENT;
-        $dataType      = $this->getDataType($column);
+        $columnName   = $column->COLUMN_NAME;
+        $nullable     = $column->IS_NULLABLE === 'YES';
+        $characterSet = $column->CHARACTER_SET_NAME;
+        $collation    = $column->COLLATION_NAME;
+        $comment      = $column->COLUMN_COMMENT;
+        $dataType     = $this->getDataType($column, $ignoreProblems);
+
+        // When the ignore problems option is set, some data types are not being processed.
+        if (is_null($dataType)) {
+            return '';
+        }
+
         $columnType    = $this->getColumnType($column);
         $extra         = $this->getExtra($column);
         $unsigned      = str_contains($columnType, 'unsigned');
@@ -425,7 +448,7 @@ class Meltor
         }
 
         if ($comment) {
-            $parts[] = sprintf('comment(\'%s\')', $comment);
+            $parts[] = sprintf('comment(\'%s\')', $this->escapeComment($comment));
         }
 
         if ($nullable) {
@@ -444,15 +467,43 @@ class Meltor
      * Returns a unique key Laravel migration command.
      *
      * @param object $constraint
-     *
+     * @param array $ignore
+     * @param Command|null $command
      * @return string
      */
-    public function generateUniqueKeyMigration(object $constraint): string
+    public function generateUniqueKeyMigration(object $constraint, array $ignore = [], Command $command = null): string
     {
-        $name    = $constraint->INDEX_NAME;
-        $columns = explode(', ', $constraint->columns);
+        $columnName = $constraint->INDEX_NAME;
+        $columns    = explode(', ', $constraint->columns);
+        $lengths    = explode(', ', $constraint->lengths);
+        $problem    = false;
 
-        return sprintf($this->getMigrationTemplate('column'), sprintf('unique([\'%s\'], \'%s\')', implode('\', \'', $columns), $name));
+        $columnsWithLength = [];
+        $tableName         = $constraint->TABLE_NAME;
+        for ($i = 0; $i < count($columns); $i++) {
+            $column = $columns[$i];
+            if ($lengths[$i] !== 'NULL') {
+                // Laravel doesn't support index length in migrations.
+                $columnsWithLength[] = sprintf('DB::raw(\'%s(%d)\')', $column, $lengths[$i]);
+            } else {
+                $columnsWithLength[] = sprintf('\'%s\'', $column);
+            }
+
+            if (in_array($column, $ignore[$tableName] ?? [])) {
+                $problem = true;
+            }
+        }
+
+        $columnsString = implode(', ', $columnsWithLength);
+
+        $uniqueKeyMigration = sprintf($this->getMigrationTemplate('column'), sprintf('unique([%s], \'%s\')', $columnsString, $columnName));
+
+        if ($problem) {
+            $uniqueKeyMigration = '// ' . $uniqueKeyMigration;
+            $command?->warn(sprintf('Unique index "%s" left commented due to an unprocessed column in table "%s"', $columnName, $tableName));
+        }
+
+        return $uniqueKeyMigration;
     }
 
     /**
@@ -469,7 +520,7 @@ class Meltor
             '\'%s\'',
             $columns[0]
         );
-        $methodName = $isSpatialIndex ? 'spatialIndex' : 'index';
+        $methodName    = $isSpatialIndex ? 'spatialIndex' : 'index';
 
         return sprintf($this->getMigrationTemplate('column'), sprintf('%s(%s, \'%s\')', $methodName, $columnsString, $keyName));
     }
@@ -477,27 +528,55 @@ class Meltor
     /**
      * Returns a foreign key Laravel migration command.
      *
-     * @param mixed $foreignKey
-     *
+     * @param Collection $foreignKeyCollection
+     * @param bool $ignoreProblems
+     * @param Command|null $command
      * @return string
+     * @throws Exception
      */
-    public function generateForeignKeyMigration(mixed $foreignKey): string
+    public function generateForeignKeyMigration(Collection $foreignKeyCollection, bool $ignoreProblems = false, Command $command = null): string
     {
-        $constraintName       = $foreignKey->CONSTRAINT_NAME;
-        $columnName           = $foreignKey->COLUMN_NAME;
-        $referencedTableName  = $foreignKey->REFERENCED_TABLE_NAME;
-        $referencedColumnName = $foreignKey->REFERENCED_COLUMN_NAME;
+        $columns           = $foreignKeyCollection->pluck('COLUMN_NAME')->toArray();
+        $referencedColumns = $foreignKeyCollection->pluck('REFERENCED_COLUMN_NAME')->toArray();
+        $referencedTable   = $foreignKeyCollection->first()->REFERENCED_TABLE_NAME;
+        $keyName           = $foreignKeyCollection->first()->CONSTRAINT_NAME;
+        $keyType           = $foreignKeyCollection->first()->TYPE;
+        $parts             = [];
+        $parts[]           = sprintf('foreign([\'%s\'], \'%s\')', implode('\', \'', $columns), $keyName);
+        $parts[]           = sprintf('references([\'%s\'])', implode('\', \'', $referencedColumns));
+        $parts[]           = sprintf('on(\'%s\')', $referencedTable);
+        $binaryChecksum    = 0;
+        $binaryTypes       = [
+            1  => 'cascadeOnDelete()',
+            2  => 'nullOnDelete()',
+            4  => 'cascadeOnUpdate()',
+            8  => 'onDelete(\'SET NULL\')',
+            // ON DELETE NO ACTION (ignored)
+            16 => null,
+            // ON UPDATE NO ACTION (ignored)
+            32 => null,
+        ];
 
-        return sprintf(
-            $this->getMigrationTemplate('column'),
-            sprintf(
-                'foreign(\'%s\', \'%s\')->references(\'%s\')->on(\'%s\')',
-                $columnName,
-                $constraintName,
-                $referencedColumnName,
-                $referencedTableName
-            )
-        );
+        foreach ($binaryTypes as $binary => $laravelPart) {
+            if ($keyType & $binary) {
+                if (!is_null($laravelPart)) {
+                    $parts[] = $laravelPart;
+                }
+
+                $binaryChecksum += $binary;
+            }
+        }
+
+        if ($keyType != $binaryChecksum) {
+            $message = sprintf('Could not determine binary key type "%s" for the key "%s"', $keyType, $keyName);
+            if ($ignoreProblems) {
+                $command?->warn($message);
+            } else {
+                throw new Exception($message);
+            }
+        }
+
+        return sprintf($this->getMigrationTemplate('column'), implode('->', $parts));
     }
 
     /**
@@ -687,5 +766,19 @@ class Meltor
                 $fileName
             )
         );
+    }
+
+    /**
+     * Escape the string that is written into the column comment in the new, generated migration.
+     *
+     * @param $value
+     * @return array|string
+     */
+    function escapeComment($value): array|string
+    {
+        $search  = ["\\", "\x00", "\n", "\r", "'", '"', "\x1a"];
+        $replace = ["\\\\", "\\0", "\\n", "\\r", "\'", '\"', "\\Z"];
+
+        return str_replace($search, $replace, $value);
     }
 }
