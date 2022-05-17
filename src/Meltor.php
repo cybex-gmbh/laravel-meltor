@@ -420,6 +420,10 @@ class Meltor
             return sprintf($this->getMigrationTemplate('column'), 'id()');
         }
 
+        if ($columnName === 'id' && $dataType === 'int' && $unsigned && $autoIncrement) {
+            return sprintf($this->getMigrationTemplate('column'), 'increments(\'id\')');
+        }
+
         if ($srsId || $displayWidth) {
             $parts[] = sprintf('%s(\'%s\', %d)', $this->config('mysql.fluentDataTypes')[$dataType], $columnName, $srsId ?? $displayWidth);
         } else {
