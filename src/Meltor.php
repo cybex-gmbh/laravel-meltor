@@ -183,15 +183,14 @@ class Meltor
      *
      * @param mixed $column
      *
-     * @return mixed
+     * @return string
      * @throws Exception
      */
-    protected function getExtra(mixed $column)
+    protected function getExtra(mixed $column): string
     {
         $extra = $column->EXTRA;
 
         if (!preg_match('/(?:auto_increment)?/', $extra)) {
-            dump($column);
             throw new Exception(sprintf('unknown EXTRA value "%s"', $extra));
         }
 
@@ -644,9 +643,9 @@ class Meltor
      *
      * @param string $sqlStructure
      *
-     * @return array|string|string[]|null
+     * @return string
      */
-    protected function removeTimeStampFromDump(string $sqlStructure)
+    protected function removeTimeStampFromDump(string $sqlStructure): string
     {
         // The time format in mysqldump file footers doesn't pad its zeroes according to ISO 8601, so trying to guess the format.
         return preg_replace(

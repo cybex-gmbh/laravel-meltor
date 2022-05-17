@@ -98,7 +98,7 @@ Notes:
 This package uses the laravel-protector package to back up your database during the test run.
 The backup file is in the default protector folder, by default `storage/app/protector/meltorTestrunBackup.sql`.
 
-In case the `artisan meltor:generate --testrun` command has crashed, you can restore you can restore the previous DB state:
+In case the `artisan meltor:generate --testrun` command has crashed, you can restore the previous DB state:
 ```php
 php artisan meltor:generate --restore
 ```

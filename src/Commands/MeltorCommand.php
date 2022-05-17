@@ -108,7 +108,7 @@ class MeltorCommand extends Command
             $this->spatialIndexes         = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection, 64);
         } else {
             $this->warn(sprintf('Could not read indexes via information_schema: %s', $innoDbIndexResult));
-            $this->line('Instead reading indexes via Doctrine, may be missing details. See README.md.');
+            $this->line('Instead reading indexes via Laravel\'s DoctrineSchemaManager, which may be missing details. See README.md.');
         }
 
         $tableMigrations      = [];
