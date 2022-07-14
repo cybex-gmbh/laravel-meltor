@@ -35,6 +35,7 @@ class MeltorCommand extends Command
     protected array $indexes = [];
     protected array $problems = [];
     protected array $spatialIndexes = [];
+    protected array $primaryKeyIsSetFor = [];
     protected bool $canAccessInnoDbIndexes = false;
     protected bool $ignoreProblems = false;
     protected bool $warnAboutFloat = false;
@@ -49,6 +50,7 @@ class MeltorCommand extends Command
      * Execute the console command.
      *
      * @return int
+     *
      * @throws Exception
      */
     public function handle(): int
@@ -97,7 +99,6 @@ class MeltorCommand extends Command
         $this->line(sprintf('Reading structure information from connection %s, database %s', $this->meltor->config('connection.data'), $this->databaseName));
 
         $this->structure   = $this->meltor->getDatabaseStructure($this->databaseName, $this->schemaConnection);
-        $this->structure   = $this->meltor->getDatabaseStructure($this->databaseName, $this->schemaConnection);
         $uniqueKeys        = $this->meltor->getUniqueKeys($this->databaseName, $this->schemaConnection);
         $foreignKeys       = $this->meltor->getForeignKeys($this->databaseName, $this->schemaConnection);
         $innoDbIndexResult = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection, 0);
@@ -113,23 +114,45 @@ class MeltorCommand extends Command
 
         $tableMigrations      = [];
         $constraintMigrations = [];
+        $rawTypeExceptions    = $this->meltor->config('mysql.exceptionRawTypes');
 
         foreach ($this->structure as $tableName => $columns) {
             $columnMigrations           = [];
+            $columnMigrationsRaw        = [];
             $columnConstraintMigrations = [];
+            $rawExceptions              = [];
 
             foreach ($columns->sortBy('ORDINAL_POSITION') as $column) {
-                if ($column->DATA_TYPE === 'float') {
-                    $this->warnAboutFloat = true;
-                }
+                $columnName = $column->COLUMN_NAME;
+                $columnType = $column->DATA_TYPE;
 
-                $columnMigration = $this->meltor->generateColumnMigration($column, $this->ignoreProblems);
+                if (array_key_exists($columnType, $rawTypeExceptions)) {
 
-                if (!$columnMigration) {
-                    $this->problems['nonGeneratedColumns'][$tableName][] = $column->COLUMN_NAME;
-                    $this->error(sprintf('Column "%s.%s" of type %s could not be generated', $tableName, $column->COLUMN_NAME, $column->DATA_TYPE));
+                    // MySQL DATA_TYPES not supported by Laravel for which we have a solution
+                    $columnMigrationsRaw[] = $this->meltor->generateRawColumnMigration(
+                        $tableName,
+                        $columnName,
+                        $rawTypeExceptions[$columnType],
+                    );
                 } else {
-                    $columnMigrations[] = $columnMigration;
+
+                    // Laravel supported and unknown TYPES.
+                    if ($column->DATA_TYPE === 'float') {
+                        $this->warnAboutFloat = true;
+                    }
+
+                    $columnMigration = $this->meltor->generateColumnMigration($column, $this->ignoreProblems);
+
+                    if (!$columnMigration) {
+                        $this->problems['nonGeneratedColumns'][$tableName][] = $columnName;
+                        $this->error(sprintf('Column "%s.%s" of type %s could not be generated', $tableName, $columnName, $column->DATA_TYPE));
+                    } else {
+                        $columnMigrations[] = $columnMigration;
+
+                        if (str_contains($columnMigration, '->increments(') || str_contains($columnMigration, '->id(')) {
+                            $this->primaryKeyIsSetFor[$tableName] = true;
+                        }
+                    }
                 }
             }
 
@@ -141,6 +164,11 @@ class MeltorCommand extends Command
             // Index Keys.
             foreach ($this->meltor->getIndexesFor($tableName, $this->canAccessInnoDbIndexes, $this->indexes, $this->dataConnection, true) as $indexKeyName => $indexKeyColumns) {
                 $columnMigrations[] = $this->meltor->generateIndexKeyMigration($indexKeyName, $indexKeyColumns);
+            }
+
+            // Primary Key
+            if (!($this->primaryKeyIsSetFor[$tableName] ?? false) && $primaryKey = $this->meltor->getPrimaryKeyFor($tableName, $this->dataConnection)) {
+                $columnMigrations[] = $this->meltor->generatePrimaryKeyMigration($primaryKey);
             }
 
             // Spatial Keys.
@@ -166,14 +194,15 @@ class MeltorCommand extends Command
                 }
             }
 
-            $tableMigrations[$tableName] = $columnMigrations;
+            $tableMigrations[$tableName]['laravel'] = $columnMigrations;
+            $tableMigrations[$tableName]['raw']     = $columnMigrationsRaw;
 
             if ($this->separateForeignKeys) {
                 $constraintMigrations[$tableName] = $columnConstraintMigrations;
             }
         }
 
-        $migrationCode      = $this->meltor->generateMigration($tableMigrations, $this->meltor->getMigrationTemplate('migrationComment'), $constraintMigrations);
+        $migrationCode      = $this->meltor->generateMigration($tableMigrations, $this->meltor->getMigrationTemplate('migrationComment'), $constraintMigrations, $rawExceptions);
         $migrationCode      = $this->meltor->beautify($migrationCode);
         $migrationFilePath  = $this->meltor->writeMigration($migrationCode, $this->meltor->config('migration.name'), $this);
         $showDisclaimerText = true;
@@ -238,10 +267,8 @@ class MeltorCommand extends Command
         // Reading structure generated by the new migration.
         $this->meltor->writeStructureDump($afterStructureFileName, $this);
 
-        // Restore existing database.
-        $this->meltor->restoreBackup($this);
-
         // Compare both structures to make sure the new, consolidated migration does what all the previous ones did.
+        $this->newLine();
         $this->line('Comparing structure dumps');
 
         $fileSizeBefore  = filesize($beforeStructureFileName);
@@ -273,6 +300,9 @@ class MeltorCommand extends Command
         if (!$fileSizeAfter) {
             $this->warn('Something went wrong, the after file is empty!');
         }
+
+        // Restore existing database.
+        $this->meltor->restoreBackup($this);
 
         return $success;
     }

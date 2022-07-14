@@ -38,13 +38,14 @@ return [
 
         // Tables excluded from comparison.
         'excludedTables'          => [
+
+            // The migration table gets created immediately when the migrate command runs.
+            // Having an older table structure, i.e. without "id", would show up as a difference in the Meltor test run.
             'migrations',
-            'job_batches',
-            'personal_access_tokens',
         ],
     ],
 
-    // MySQL data types are being converted to Laravel fluent ones.
+    // MySQL DATA_TYPES are being converted to Laravel fluent ones.
     'mysql'     => [
         // https://laravel.com/docs/9.x/migrations#available-column-types
         'fluentDataTypes' => [
@@ -99,6 +100,10 @@ return [
             // not supported by Laravel:
             // binary
             // varbinary
+            // https://github.com/laravel/framework/issues/1606
+            // It seems like you can just set the character set to binary as a workaround:
+            // $table->char('url_hash', 16)->charset('binary');
+            // This is actually shown as a real binary column type with a length of 16 in MySQL Workbench.
 
             // String - Blob
             // https://dev.mysql.com/doc/refman/8.0/en/blob.html
@@ -143,6 +148,14 @@ return [
             'bigint',
             'int',
             'tinyint',
+        ],
+
+        // MySQL DATA_TYPE that are not supported by Laravel but can be created with simple raw statements
+        'exceptionRawTypes'  => [
+            'tinyblob'   => 'TINYBLOB',
+            'mediumblob' => 'MEDIUMBLOB',
+            'longblob'   => 'LONGBLOB',
+            'bit'        => 'BIT',
         ],
     ],
 ];

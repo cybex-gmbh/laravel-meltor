@@ -32,8 +32,9 @@ class TestMigrationCommand extends Command
      */
     public function handle(): int
     {
-        $this->meltor     = app('meltor');
-        $columnMigrations = [];
+        $this->meltor                = app('meltor');
+        $columnMigrations['laravel'] = [];
+        $columnMigrations['raw']     = [];
 
         foreach ($this->meltor->config('mysql.fluentDataTypes') as $mysqlType => $fluentType) {
             $column                     = new \stdClass();
@@ -44,10 +45,10 @@ class TestMigrationCommand extends Command
             $column->CHARACTER_SET_NAME = null;
             $column->COLLATION_NAME     = null;
             $column->COLUMN_COMMENT     = null;
-            $column->EXTRA              = null;
+            $column->EXTRA              = '';
             $column->COLUMN_DEFAULT     = null;
 
-            $columnMigrations[] = $this->meltor->generateColumnMigration($column);
+            $columnMigrations['laravel'][] = $this->meltor->generateColumnMigration($column);
         }
 
         $tableMigrations['meltor_all_types_test'] = $columnMigrations;

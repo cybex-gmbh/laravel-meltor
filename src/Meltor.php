@@ -9,6 +9,7 @@ use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
+use Doctrine\DBAL\Schema\Index;
 
 class Meltor
 {
@@ -38,15 +39,15 @@ class Meltor
     {
         $strippedName = substr(strrchr($name, '/'), 1);
 
-        return $strippedName === false ? $name : $strippedName;
+        return !$strippedName ? $name : $strippedName;
     }
 
     /**
      * Returns the default database config.
      *
-     * @return mixed
+     * @return array
      */
-    public function getDatabaseConfig(): mixed
+    public function getDatabaseConfig(): array
     {
         return config(
             sprintf(
@@ -132,12 +133,12 @@ class Meltor
     /**
      * Extract the MySQL DATA_TYPE column property and check it.
      *
-     * @param mixed $column
+     * @param object $column
      * @param bool $ignoreProblems
      * @return string|null
      * @throws Exception
      */
-    protected function getDataType(mixed $column, bool $ignoreProblems = false): ?string
+    protected function getDataType(object $column, bool $ignoreProblems = false): ?string
     {
         $columnType = $column->COLUMN_TYPE;
         $dataType   = $column->DATA_TYPE;
@@ -148,7 +149,6 @@ class Meltor
 
         if (!array_key_exists($dataType, $this->config('mysql.fluentDataTypes'))) {
             if (!$ignoreProblems) {
-                dump($column);
                 throw new Exception(sprintf('unknown DATA_TYPE value "%s"', $dataType));
             }
 
@@ -161,51 +161,51 @@ class Meltor
     /**
      * Extract the MySQL COLUMN_TYPE column property and check it.
      *
-     * @param mixed $column
-     *
-     * @return mixed
+     * @param object $column
+     * @param bool $ignoreProblems
+     * @return string|null
      * @throws Exception
      */
-    protected function getColumnType(mixed $column)
+    protected function getColumnType(object $column, bool $ignoreProblems = false): ?string
     {
         $columnType = $column->COLUMN_TYPE;
         $dataType   = $column->DATA_TYPE;
 
         if (!preg_match('/' . $dataType . '(?:\(\d+\))?(?:\sunsigned)?/', $columnType)) {
-            throw new Exception(sprintf('unknown COLUMN_TYPE value "%s"', $columnType));
+            if (!$ignoreProblems) {
+                throw new Exception(sprintf('unknown COLUMN_TYPE value "%s"', $columnType));
+            }
+
+            return null;
         }
 
         return $columnType;
     }
 
     /**
-     * Extract the MySQL EXTRA column property and check it.
+     * Extract the MySQL EXTRA column property.
      *
-     * @param mixed $column
+     * The content is not being checked as there are multiple valid combinations.
+     *
+     * @param object $column
      *
      * @return string
-     * @throws Exception
      */
-    protected function getExtra(mixed $column): string
+    protected function getExtra(object $column): string
     {
-        $extra = $column->EXTRA;
-
-        if (!preg_match('/(?:auto_increment)?/', $extra)) {
-            throw new Exception(sprintf('unknown EXTRA value "%s"', $extra));
-        }
-
-        return $extra;
+        return $column->EXTRA ?? '';
     }
 
     /**
      * Extracts the optional display width from the MySQL COLUMN_TYPE property.
      *
      * @param object $column
+     * @param bool $ignoreProblems
      *
-     * @return mixed|null
+     * @return int|null
      * @throws Exception
      */
-    protected function getDisplayWidth(object $column): ?int
+    protected function getDisplayWidth(object $column, bool $ignoreProblems = false): ?int
     {
         $columnType = $column->COLUMN_TYPE;
         $dataType   = $column->DATA_TYPE;
@@ -217,15 +217,19 @@ class Meltor
 
         $matches = [];
 
-        preg_match('/\((\d+)\).*/', $columnType, $matches);
+        preg_match('/^\w+\((\d+)\)$/', $columnType, $matches);
 
         if (count($matches) === 2) {
             $intMatch = (int)$matches[1];
+
             if ($intMatch != $matches[1]) {
-                dump($column);
-                throw new Exception(
-                    sprintf('unable to extract display width from COLUMN_TYPE value "%s"', $columnType)
-                );
+                if (!$ignoreProblems) {
+                    throw new Exception(
+                        sprintf('unable to extract display width from COLUMN_TYPE value "%s"', $columnType)
+                    );
+                }
+
+                return null;
             }
 
             return $intMatch;
@@ -233,7 +237,6 @@ class Meltor
             return null;
         }
 
-        dump($column);
         throw new Exception(sprintf('unable to extract display width from COLUMN_TYPE value "%s"', $columnType));
     }
 
@@ -280,6 +283,7 @@ class Meltor
 
     /**
      * Return the index information of a table.
+     *
      * Based on Doctrine, used as a backup because it looses information on the index key order.
      *
      * @param string $tableName
@@ -321,6 +325,20 @@ class Meltor
     }
 
     /**
+     * Return the primary key information of a table.
+     *
+     * Based on Doctrine.
+     *
+     * @param string $tableName
+     * @param ConnectionInterface $connection
+     * @return Index|null
+     */
+    public function getPrimaryKeyFor(string $tableName, ConnectionInterface $connection): ?Index
+    {
+        return collect($connection->getDoctrineSchemaManager()->listTableIndexes($tableName))->filter->isPrimary()->all()['primary'] ?? null;
+    }
+
+    /**
      * Returns a migration template.
      *
      * Exists to help refactor the handling of migration templates.
@@ -338,6 +356,57 @@ class Meltor
     }
 
     /**
+     * Returns a laravel migration command to alter or create a field.
+     *
+     * @param string $method
+     * @param string|null $columnsString
+     * @param string|null $keyName
+     * @return string
+     */
+    protected function compileColumnMigration(string $method, string $columnsString = null, string $keyName = null): string
+    {
+        $template = $this->getMigrationTemplate('column');
+
+        if ($keyName) {
+            return sprintf($template, sprintf('%s(%s, \'%s\')', $method, $columnsString, $keyName));
+        }
+
+        if ($columnsString) {
+            return sprintf($template, sprintf('%s(%s)', $method, $columnsString));
+        }
+
+        return sprintf($template, $method);
+    }
+
+    /**
+     * Returns a string for one or more fields for a migration command.
+     *
+     * @param array $columns
+     * @return string
+     */
+    protected function compileColumnsString(array $columns): string
+    {
+        if (count($columns) > 1) {
+            return sprintf('[\'%s\']', implode('\', \'', $columns));
+        } else {
+            return sprintf('\'%s\'', $columns[0]);
+        }
+    }
+
+    /**
+     * Returns a raw DB statement for MySQL COLUMN_TYPES that are not supported by Laravel.
+     *
+     * @param string $table
+     * @param string $name
+     * @param string $type
+     * @return string
+     */
+    public function generateRawColumnMigration(string $table, string $name, string $type): string
+    {
+        return sprintf($this->getMigrationTemplate('columnRaw'), $table, $name, $type);
+    }
+
+    /**
      * Returns the content of a Laravel migration file.
      *
      * @param array $tableMigrations
@@ -346,13 +415,14 @@ class Meltor
      *
      * @return string
      */
-    public function generateMigration(array $tableMigrations, string $comment, array $constraintMigrations = []): string
+    public function generateMigration(array $tableMigrations, string $comment, array $constraintMigrations = [], array $rawExceptions = []): string
     {
         $tableMigrationCode = [];
 
         foreach ($tableMigrations as $tableName => $columnMigrations) {
-            $columns              = implode("\n", $columnMigrations);
-            $tableMigrationCode[] = sprintf($this->getMigrationTemplate('createTable'), $tableName, $tableName, $columns);
+            $columns              = implode("\n", $columnMigrations['laravel']);
+            $columnsRaw           = count($columnMigrations['raw']) ? "\n" . implode("\n", $columnMigrations['raw']) : '';
+            $tableMigrationCode[] = sprintf($this->getMigrationTemplate('createTable'), $tableName, $tableName, $columns, $columnsRaw);
         }
 
         $tables           = implode('', $tableMigrationCode);
@@ -405,7 +475,7 @@ class Meltor
             return '';
         }
 
-        $columnType    = $this->getColumnType($column);
+        $columnType    = $this->getColumnType($column, $ignoreProblems);
         $extra         = $this->getExtra($column);
         $unsigned      = str_contains($columnType, 'unsigned');
         $default       = $column->COLUMN_DEFAULT;
@@ -416,11 +486,12 @@ class Meltor
         $parts         = [];
 
         if ($columnName === 'id' && $dataType === 'bigint' && $unsigned && $autoIncrement) {
-            return sprintf($this->getMigrationTemplate('column'), 'id()');
+            return sprintf($this->compileColumnMigration('id()'));
         }
 
         if ($columnName === 'id' && $dataType === 'int' && $unsigned && $autoIncrement) {
-            return sprintf($this->getMigrationTemplate('column'), 'increments(\'id\')');
+
+            return sprintf($this->compileColumnMigration('increments', '\'id\''));
         }
 
         if ($srsId || $displayWidth) {
@@ -464,7 +535,7 @@ class Meltor
             $parts[] = 'useCurrentOnUpdate()';
         }
 
-        return sprintf($this->getMigrationTemplate('column'), implode('->', $parts));
+        return $this->compileColumnMigration(implode('->', $parts));
     }
 
     /**
@@ -498,9 +569,8 @@ class Meltor
             }
         }
 
-        $columnsString = implode(', ', $columnsWithLength);
-
-        $uniqueKeyMigration = sprintf($this->getMigrationTemplate('column'), sprintf('unique([%s], \'%s\')', $columnsString, $columnName));
+        $columnsString      = sprintf('[%s]', implode(', ', $columnsWithLength));
+        $uniqueKeyMigration = $this->compileColumnMigration('unique', $columnsString, $columnName);
 
         if ($problem) {
             $uniqueKeyMigration = '// ' . $uniqueKeyMigration;
@@ -520,13 +590,25 @@ class Meltor
      */
     public function generateIndexKeyMigration(string $keyName, array $columns, bool $isSpatialIndex = false): string
     {
-        $columnsString = count($columns) > 1 ? sprintf('[\'%s\']', implode('\', \'', $columns)) : sprintf(
-            '\'%s\'',
-            $columns[0]
-        );
+        $columnsString = $this->compileColumnsString($columns);
         $methodName    = $isSpatialIndex ? 'spatialIndex' : 'index';
 
-        return sprintf($this->getMigrationTemplate('column'), sprintf('%s(%s, \'%s\')', $methodName, $columnsString, $keyName));
+        return $this->compileColumnMigration($methodName, $columnsString, $keyName);
+    }
+
+    /**
+     * Returns a primary key Laravel migration command.
+     *
+     * @param Index $primaryKey
+     * @return string
+     */
+    public function generatePrimaryKeyMigration(Index $primaryKey): string
+    {
+        $columns = $primaryKey->getColumns();
+
+        $columnsString = $this->compileColumnsString($columns);
+
+        return $this->compileColumnMigration('primary', $columnsString);
     }
 
     /**
@@ -546,8 +628,8 @@ class Meltor
         $keyName           = $foreignKeyCollection->first()->CONSTRAINT_NAME;
         $keyType           = $foreignKeyCollection->first()->TYPE;
         $parts             = [];
-        $parts[]           = sprintf('foreign([\'%s\'], \'%s\')', implode('\', \'', $columns), $keyName);
-        $parts[]           = sprintf('references([\'%s\'])', implode('\', \'', $referencedColumns));
+        $parts[]           = sprintf('foreign(%s, \'%s\')', $this->compileColumnsString($columns), $keyName);
+        $parts[]           = sprintf('references(%s)', $this->compileColumnsString($referencedColumns));
         $parts[]           = sprintf('on(\'%s\')', $referencedTable);
         $binaryChecksum    = 0;
         $binaryTypes       = [
@@ -580,7 +662,7 @@ class Meltor
             }
         }
 
-        return sprintf($this->getMigrationTemplate('column'), implode('->', $parts));
+        return $this->compileColumnMigration(implode('->', $parts));
     }
 
     /**
@@ -661,7 +743,8 @@ class Meltor
      * The resulting content is only suitable for comparison.
      *
      * @param string $structureFileName
-     * @return mixed
+     *
+     * @return string
      */
     public function readAndCleanStructure(string $structureFileName): string
     {
@@ -685,6 +768,7 @@ class Meltor
      * @param string $migrationName
      * @param int $offset Seconds to add to the file name date
      * @param Command|null $command Used for shell output
+     *
      * @return string
      */
     public function writeMigration(string $migrationContent, string $migrationName, Command $command = null, int $offset = 0): string

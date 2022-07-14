@@ -41,12 +41,12 @@ return new class extends Migration
 };
 ',
 
-    // Table creation.
+    // Table creation. Optionally there can be raw statements after the laravel method call, for MySQL DATA_TYPES Laravel doesn't support.
     'createTable' => '
         if (!Schema::hasTable(\'%s\')) {
             Schema::create(\'%s\', function (Blueprint $table) {
 %s
-            });
+            });%s
         }
 ',
 
@@ -59,4 +59,7 @@ return new class extends Migration
 
     // Single column in a table.
     'column' => '                $table->%s;',
+
+    // Single column as raw statement for MySQL DATA_TYPES not supported by Laravel.
+    'columnRaw' =>  '            DB::statement(\'ALTER TABLE `%s` ADD `%s` %s\');',
 ];
