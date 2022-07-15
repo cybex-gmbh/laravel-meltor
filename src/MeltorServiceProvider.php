@@ -16,16 +16,10 @@ class MeltorServiceProvider extends ServiceProvider
         /*
          * Optional methods to load your package assets
          */
-         $this->loadViewsFrom(__DIR__.'/../resources/views', 'meltor');
-
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__ . '/../config/meltor.php' => config_path('meltor.php'),
             ], 'config');
-
-            $this->publishes([
-                __DIR__ . '/../stubs/'
-            ]);
 
             // Registering package commands.
             $this->commands([
