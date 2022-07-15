@@ -70,7 +70,7 @@ Configuring the root user to access the database with sufficient permissions is 
 
 To create a new migration file:
 
-```php
+```bash
 php artisan meltor:generate
 ```
 
@@ -84,7 +84,7 @@ Notes:
 
 To also do a comparison between the old and the new database:
 
-```php
+```bash
 php artisan meltor:generate --testrun
 ```
 
@@ -99,7 +99,7 @@ This package uses the laravel-protector package to back up your database during 
 The backup file is in the default protector folder, by default `storage/app/protector/meltorTestrunBackup.sql`.
 
 In case the `artisan meltor:generate --testrun` command has crashed, you can restore the previous DB state:
-```php
+```bash
 php artisan meltor:generate --restore
 ```
 
@@ -134,6 +134,12 @@ Exceptions:
 
 - [Cybex Web Development Team](https://github.com/cybex-gmbh)
 - [All Contributors](../../contributors)
+
+## Testing
+
+```bash
+vendor/bin/phpunit tests/MeltorTests.php
+```
 
 ## License
 
