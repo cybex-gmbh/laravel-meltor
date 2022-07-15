@@ -341,8 +341,6 @@ class Meltor
     /**
      * Returns a migration template.
      *
-     * Exists to help refactor the handling of migration templates.
-     *
      * @param string $name
      * @param null $default
      *
