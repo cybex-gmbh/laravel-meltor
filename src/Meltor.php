@@ -812,7 +812,35 @@ class Meltor
         $command?->newLine();
         $command?->line('Restoring database backup');
         $command?->call('protector:import', ['--dump' => $this->config('testrun.backupFileName'), '--force' => true]);
+        $this->deleteBackup();
         $command?->newLine();
+    }
+
+    public function deleteBackup(): void
+    {
+        Protector::getDisk()->delete($this->backupFilePath());
+    }
+
+    /**
+     * Returns true if a test run database backup file still exists.
+     *
+     * These would have been deleted after a successful restore.
+     *
+     * @return bool
+     */
+    public function backupExists(): bool
+    {
+        return Protector::getDisk()->exists($this->backupFilePath());
+    }
+
+    /**
+     * Returns the path to the temporary test run database backup file.
+     *
+     * @return string
+     */
+    public function backupFilePath(): string
+    {
+        return sprintf('%s/%s', config('protector.baseDirectory'), config('meltor.testrun.backupFileName'));
     }
 
     /**
@@ -828,7 +856,7 @@ class Meltor
     {
         $command?->newLine();
         $command?->line(sprintf('Backing up database structure for comparison: %s', $fileName));
-        @unlink($fileName);
+        file_exists($fileName) && unlink($fileName);
 
         $connectionConfig = $this->getDatabaseConfig();
         $dumpOptions      = collect();
@@ -860,7 +888,7 @@ class Meltor
      * @param $value
      * @return array|string
      */
-    function escapeComment($value): array|string
+    protected function escapeComment($value): array|string
     {
         $search  = ["\\", "\x00", "\n", "\r", "'", '"', "\x1a"];
         $replace = ["\\\\", "\\0", "\\n", "\\r", "\'", '\"', "\\Z"];

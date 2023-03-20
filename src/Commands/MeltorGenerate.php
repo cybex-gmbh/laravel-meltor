@@ -9,7 +9,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Meltor\Meltor;
 
-class MeltorCommand extends Command
+class MeltorGenerate extends Command
 {
     /**
      * The name and signature of the console command.
@@ -20,8 +20,7 @@ class MeltorCommand extends Command
                 {--f|force               : Execute without confirmation. }
                 {--i|ignoreProblems      : Leave out structures that cannot be processed. }
                 {--s|separateForeignKeys : Put foreign keys at the end of the file. Avoids problems with constraint checks. }
-                {--t|testrun             : Perform a db structure comparison testrun (will need to drop and restore your DB). }
-                {--r|restore             : Restore the db backup from a previous run, stops after that. }
+                {--t|testrun             : Perform a db structure comparison testrun (this will drop and restore your DB). }
                 ';
 
     /**
@@ -69,10 +68,10 @@ class MeltorCommand extends Command
             return 1;
         }
 
-        if ($this->option('restore')) {
-            $this->meltor->restoreBackup($this);
-
-            return 0;
+        if ($this->meltor->backupExists()) {
+            if ($this->ask('A previous test run seems to have aborted. Restore database backup before starting? (y|N)')) {
+                $this->meltor->restoreBackup($this);
+            }
         }
 
         $this->newLine();
@@ -83,9 +82,7 @@ class MeltorCommand extends Command
             $this->newLine();
             $this->line('Test run enabled');
             if (!$this->option('force')) {
-                $ready = $this->ask(
-                    'Please confirm that you have deleted all old migrations, except ones that change framework or package created tables (y|N)'
-                );
+                $ready = $this->ask('Please confirm that you have deleted all old migrations, except ones that change framework or package created tables (y|N)');
 
                 if ($ready != 'y') {
                     $this->info('Aborting');
@@ -102,6 +99,13 @@ class MeltorCommand extends Command
         $uniqueKeys        = $this->meltor->getUniqueKeys($this->databaseName, $this->schemaConnection);
         $foreignKeys       = $this->meltor->getForeignKeys($this->databaseName, $this->schemaConnection);
         $innoDbIndexResult = $this->meltor->getIndexesFromInnoDb($this->databaseName, $this->schemaConnection, 0);
+
+        if($this->structure->isEmpty()) {
+            $this->error('The database is empty');
+            $this->newLine();
+
+            return 0;
+        }
 
         if (is_array($innoDbIndexResult)) {
             $this->canAccessInnoDbIndexes = true;
@@ -285,7 +289,7 @@ class MeltorCommand extends Command
             $this->info('Success! the structure files are identical!');
             $success = true;
         } else {
-            $this->warn('The structure files are not identical, please check!');
+            $this->warn('The structure files are not identical. Run php artisan meltor:diff to investigate.');
             $success = true;
         }
 

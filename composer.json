@@ -25,6 +25,7 @@
         "cybex/laravel-protector": "^1.4",
         "cybex/laravel-reflector": "^1.1",
         "illuminate/support": "^8.0|^9.0",
+        "jfcherng/php-diff": "^6.0",
         "laravel/sail": "^1.14"
     },
     "require-dev": {

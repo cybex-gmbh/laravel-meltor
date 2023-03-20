@@ -6,7 +6,7 @@ use Exception;
 use Illuminate\Console\Command;
 use Meltor\Meltor;
 
-class TestMigrationCommand extends Command
+class MeltorTestMigration extends Command
 {
     /**
      * The name and signature of the console command.
