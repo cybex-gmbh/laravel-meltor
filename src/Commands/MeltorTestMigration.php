@@ -48,7 +48,7 @@ class MeltorTestMigration extends Command
             $column->EXTRA              = '';
             $column->COLUMN_DEFAULT     = null;
 
-            $columnMigrations['laravel'][] = $this->meltor->generateColumnMigration($column);
+            $columnMigrations['laravel'][] = $this->meltor->generateMigrationColumn($column);
         }
 
         $tableMigrations['meltor_all_types_test'] = $columnMigrations;
