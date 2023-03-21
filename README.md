@@ -98,15 +98,45 @@ Notes:
 This package uses the laravel-protector package to back up your database during the test run.
 The backup file is in the default protector folder, by default `storage/app/protector/meltorTestrunBackup.sql`.
 
-In case the `artisan meltor:generate --testrun` command has crashed, you can restore the previous DB state:
+In case the `artisan meltor:generate --testrun` command has crashed, the next time you call the command, it will ask if you want to restore the database.
+
+You can also manually restore the backup into the database, which will also remove the backup file, with:
 ```php
-php artisan meltor:generate --restore
+php artisan meltor:restore
+```
+
+### Customizing file paths
+
+The following .env keys allow you to control where the temporary test run files will be stored:
+
+This is where the database will be backed up and automatically restored from. The disk is controlled by the laravel-protector package.
+```
+MELTOR_BACKUP_FILENAME=meltorTestrunBackup.sql
+```
+
+Disk where the comparison files will be placed.
+```
+MELTOR_COMPARISON_DISK=local
+```
+
+Folder where the comparison files will be placed.
+```
+MELTOR_COMPARISON_FOLDER=
+```
+
+The database structure files which will be the base of comparison.
+```
+MELTOR_COMPARISON_BEFORE_FILENAME=meltorStructureBefore.sql
+MELTOR_COMPARISON_AFTER_FILENAME=meltorStructureAfter.sql
 ```
 
 ### Problems
 
 This package will abort when it cannot replicate the database into a migration file. If you want to proceed anyway, use the `--ignoreProblems` option.
 There will be warning messages informing you about table columns and indexes that have not been transferred.
+
+Note that calling `artisan meltor:generate` will remove older migration files that it generated. If you want to change the generated migration file,
+be sure to rename the file to not contain `meltor` (customizable in `config('meltor.migration.name')`) and/or commit your changes before running the command again. 
 
 #### Foreign keys
 

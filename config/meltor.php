@@ -16,7 +16,7 @@ return [
 
     'migration' => [
 
-        // Filename of the new, generated migration.
+        // Filename of the new, generated migration. Migration files with this in the name will be deleted when meltor:generate is called!
         'name'   => 'meltor',
 
         // Folder where the migrations will be placed.
@@ -26,18 +26,18 @@ return [
     // The test run option applies the new migration, and compares the resulting DB structure
     'testrun'   => [
 
-        // This is where the database will be backup up and automatically restored from.
-        'backupFileName'          => 'meltorTestrunBackup.sql',
+        // This is where the database will be backed up and automatically restored from. The disk is controlled by the laravel-protector package.
+        'backupFileName' => env('MELTOR_BACKUP_FILENAME', 'meltorTestrunBackup.sql'),
+
+        // Folder where the comparison files will be placed. Has to be local because of mysqldump.
+        'folder'         => env('MELTOR_COMPARISON_FOLDER', 'storage/app'),
 
         // The database structure files which will be the base of comparison.
-        'beforeStructureFileName' => 'meltorStructureBefore.sql',
-        'afterStructureFileName'  => 'meltorStructureAfter.sql',
-
-        // Folder where the comparison files will be placed.
-        'folder'                  => fn() => storage_path(),
+        'beforeFileName' => env('MELTOR_COMPARISON_BEFORE_FILENAME', 'meltorStructureBefore.sql'),
+        'afterFileName'  => env('MELTOR_COMPARISON_AFTER_FILENAME', 'meltorStructureAfter.sql'),
 
         // Tables excluded from comparison.
-        'excludedTables'          => [
+        'excludedTables' => [
 
             // The migration table gets created immediately when the migrate command runs.
             // Having an older table structure, i.e. without "id", would show up as a difference in the Meltor test run.

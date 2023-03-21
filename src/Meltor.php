@@ -2,6 +2,7 @@
 
 namespace Meltor;
 
+use Protector;
 use DateTime;
 use Exception;
 use Illuminate\Console\Command;
@@ -456,10 +457,10 @@ class Meltor
      *
      * @param object $column
      * @param bool $ignoreProblems
+     * @param array $uniqueKeys
      * @return string|null
-     * @throws Exception
      */
-    public function generateColumnMigration(object $column, bool $ignoreProblems = false): ?string
+    public function generateMigrationColumn(object $column, bool $ignoreProblems = false, array $uniqueKeys = []): ?string
     {
         $columnName   = $column->COLUMN_NAME;
         $nullable     = $column->IS_NULLABLE === 'YES';
@@ -544,7 +545,7 @@ class Meltor
      * @param Command|null $command
      * @return string
      */
-    public function generateUniqueKeyMigration(object $constraint, array $ignore = [], Command $command = null): string
+    public function generateMigrationUniqueKey(object $constraint, array $ignore = [], Command $command = null): string
     {
         $columnName = $constraint->INDEX_NAME;
         $columns    = explode(', ', $constraint->columns);
@@ -586,7 +587,7 @@ class Meltor
      * @param bool $isSpatialIndex
      * @return string
      */
-    public function generateIndexKeyMigration(string $keyName, array $columns, bool $isSpatialIndex = false): string
+    public function generateMigrationIndexKey(string $keyName, array $columns, bool $isSpatialIndex = false): string
     {
         $columnsString = $this->compileColumnsString($columns);
         $methodName    = $isSpatialIndex ? 'spatialIndex' : 'index';
@@ -600,7 +601,7 @@ class Meltor
      * @param Index $primaryKey
      * @return string
      */
-    public function generatePrimaryKeyMigration(Index $primaryKey): string
+    public function generateMigrationPrimaryKey(Index $primaryKey): string
     {
         $columns = $primaryKey->getColumns();
 
@@ -618,7 +619,7 @@ class Meltor
      * @return string
      * @throws Exception
      */
-    public function generateForeignKeyMigration(Collection $foreignKeyCollection, bool $ignoreProblems = false, Command $command = null): string
+    public function generateMigrationForeignKey(Collection $foreignKeyCollection, bool $ignoreProblems = false, Command $command = null): string
     {
         $columns           = $foreignKeyCollection->pluck('COLUMN_NAME')->toArray();
         $referencedColumns = $foreignKeyCollection->pluck('REFERENCED_COLUMN_NAME')->toArray();
@@ -702,6 +703,10 @@ class Meltor
      */
     public function combinePath(string $folder, string $file): string
     {
+        if (!$folder) {
+            return $file;
+        }
+
         return sprintf('%s/%s', $folder, $file);
     }
 
@@ -818,7 +823,7 @@ class Meltor
 
     public function deleteBackup(): void
     {
-        Protector::getDisk()->delete($this->backupFilePath());
+        Protector::getDisk()->delete($this->getBackupFilePath());
     }
 
     /**
@@ -830,7 +835,7 @@ class Meltor
      */
     public function backupExists(): bool
     {
-        return Protector::getDisk()->exists($this->backupFilePath());
+        return Protector::getDisk()->exists($this->getBackupFilePath());
     }
 
     /**
@@ -838,9 +843,35 @@ class Meltor
      *
      * @return string
      */
-    public function backupFilePath(): string
+    public function getBackupFilePath(): string
     {
-        return sprintf('%s/%s', config('protector.baseDirectory'), config('meltor.testrun.backupFileName'));
+        return $this->combinePath(config('protector.baseDirectory'), config('meltor.testrun.backupFileName'));
+    }
+
+    /**
+     * Returns the path to the "before" sql structure file of the test run.
+     *
+     * @return string
+     */
+    public function getBeforeTestrunFilePath(): string
+    {
+        return $this->combinePath(
+            $this->config('testrun.folder'),
+            $this->config('testrun.beforeFileName')
+        );
+    }
+
+    /**
+     * Returns the path to the "after" sql structure file of the test run.
+     *
+     * @return string
+     */
+    public function getAfterTestrunFilePath(): string
+    {
+        return $this->combinePath(
+            $this->config('testrun.folder'),
+            $this->config('testrun.afterFileName')
+        );
     }
 
     /**
@@ -848,15 +879,15 @@ class Meltor
      *
      * Does not contain data, excludes certain tables.
      *
-     * @param string $fileName
+     * @param string $path
      * @param Command|null $command Used for shell output
      * @return void
      */
-    public function writeStructureDump(string $fileName, Command $command = null): void
+    public function writeStructureDump(string $path, Command $command = null): void
     {
         $command?->newLine();
-        $command?->line(sprintf('Backing up database structure for comparison: %s', $fileName));
-        file_exists($fileName) && unlink($fileName);
+        $command?->line(sprintf('Backing up database structure for comparison: %s', $path));
+        file_exists($path) && unlink($path);
 
         $connectionConfig = $this->getDatabaseConfig();
         $dumpOptions      = collect();
@@ -877,7 +908,7 @@ class Meltor
             sprintf(
                 'mysqldump %s | sed --expression="s/ AUTO_INCREMENT=[0-9]\+//" > %s 2> /dev/null',
                 $dumpOptions->implode(' '),
-                $fileName
+                $path
             )
         );
     }

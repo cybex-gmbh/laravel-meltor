@@ -35,29 +35,29 @@ class MeltorDiff extends Command
      */
     public function handle(): int
     {
-        $this->meltor              = app('meltor');
-        $beforeStructureFileName = $this->meltor->beforeStructureFilePath();
-        $afterStructureFileName  = $this->meltor->afterStructureFilePath();
+        $this->meltor   = app('meltor');
+        $beforeFilePath = $this->meltor->getBeforeTestrunFilePath();
+        $afterFilePath  = $this->meltor->getAfterTestrunFilePath();
 
-        if (!file_exists($beforeStructureFileName)) {
-            $this->warn(sprintf('Could not find "%s". Run a test run first.', $beforeStructureFileName));
+        if (!file_exists($beforeFilePath)) {
+            $this->warn(sprintf('Could not find "%s". Run a test run first.', $beforeFilePath));
 
             return 0;
         }
 
-        if (!file_exists($afterStructureFileName)) {
-            $this->warn(sprintf('Could not find "%s". Run a test run first.', $afterStructureFileName));
+        if (!file_exists($afterFilePath)) {
+            $this->warn(sprintf('Could not find "%s". Run a test run first.', $afterFilePath));
 
             return 0;
         }
 
         $this->newLine();
         $this->info('Comparing the test run database structure dumps:');
-        $this->line($beforeStructureFileName);
-        $this->line($afterStructureFileName);
+        $this->line($beforeFilePath);
+        $this->line($afterFilePath);
         $this->newLine();
 
-        $diff = DiffHelper::calculateFiles($beforeStructureFileName, $afterStructureFileName, 'Unified');
+        $diff = DiffHelper::calculateFiles($beforeFilePath, $afterFilePath, 'Unified');
 
         $this->line($diff ?: 'The files are identical!');
         $this->newLine();
