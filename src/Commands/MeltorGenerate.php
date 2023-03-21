@@ -69,7 +69,7 @@ class MeltorGenerate extends Command
         }
 
         if ($this->meltor->backupExists()) {
-            if ($this->ask('A previous test run seems to have aborted. Restore database backup before starting? (y|N)')) {
+            if ($this->ask('A previous test run seems to have aborted. Restore database backup before starting? (y|N)', 'n') == 'y') {
                 $this->meltor->restoreBackup($this);
             }
         }
