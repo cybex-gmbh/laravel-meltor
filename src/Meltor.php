@@ -457,12 +457,13 @@ class Meltor
      *
      * @param object $column
      * @param bool $ignoreProblems
-     * @param array $uniqueKeys
+     * @param bool $isUnique
      * @return string|null
      */
-    public function generateMigrationColumn(object $column, bool $ignoreProblems = false, array $uniqueKeys = []): ?string
+    public function generateMigrationColumn(object $column, bool $ignoreProblems = false, bool $isUnique = false, string $uniqueKeyName = null): ?string
     {
         $columnName   = $column->COLUMN_NAME;
+        $tableName    = $column->TABLE_NAME;
         $nullable     = $column->IS_NULLABLE === 'YES';
         $characterSet = $column->CHARACTER_SET_NAME;
         $collation    = $column->COLLATION_NAME;
@@ -501,6 +502,15 @@ class Meltor
 
         if ($unsigned) {
             $parts[] = 'unsigned()';
+        }
+
+        if ($isUnique) {
+            // Set non default key name.
+            if ($uniqueKeyName && $uniqueKeyName != sprintf('%s_%s_unique', $tableName, $columnName)) {
+                $parts[] = sprintf('unique(\'%s\')', $uniqueKeyName);
+            } else {
+                $parts[] = 'unique()';
+            }
         }
 
         if ($characterSet) {
@@ -547,10 +557,10 @@ class Meltor
      */
     public function generateMigrationUniqueKey(object $constraint, array $ignore = [], Command $command = null): string
     {
-        $columnName = $constraint->INDEX_NAME;
-        $columns    = explode(', ', $constraint->columns);
-        $lengths    = explode(', ', $constraint->lengths);
-        $problem    = false;
+        $keyName = $constraint->INDEX_NAME;
+        $columns = explode(', ', $constraint->columns);
+        $lengths = explode(', ', $constraint->lengths);
+        $problem = false;
 
         $columnsWithLength = [];
         $tableName         = $constraint->TABLE_NAME;
@@ -569,11 +579,11 @@ class Meltor
         }
 
         $columnsString      = sprintf('[%s]', implode(', ', $columnsWithLength));
-        $uniqueKeyMigration = $this->compileColumnMigration('unique', $columnsString, $columnName);
+        $uniqueKeyMigration = $this->compileColumnMigration('unique', $columnsString, $keyName);
 
         if ($problem) {
             $uniqueKeyMigration = '// ' . $uniqueKeyMigration;
-            $command?->warn(sprintf('Unique index "%s" left commented due to an unprocessed column in table "%s"', $columnName, $tableName));
+            $command?->warn(sprintf('Unique index "%s" left commented due to an unprocessed column in table "%s"', $keyName, $tableName));
         }
 
         return $uniqueKeyMigration;

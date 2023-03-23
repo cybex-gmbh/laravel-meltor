@@ -35,6 +35,7 @@ class MeltorGenerate extends Command
     protected array $problems = [];
     protected array $spatialIndexes = [];
     protected array $primaryKeyIsSetFor = [];
+    protected array $uniqueKeyIsSetFor = [];
     protected bool $canAccessInnoDbIndexes = false;
     protected bool $ignoreProblems = false;
     protected bool $warnAboutFloat = false;
@@ -145,7 +146,19 @@ class MeltorGenerate extends Command
                         $this->warnAboutFloat = true;
                     }
 
-                $columnMigration = $this->meltor->generateMigrationColumn($column, $this->ignoreProblems);
+                    // Handle simple unique keys within the column definition.
+                    $uniqueKeysForTable = $uniqueKeys->get($tableName) ?? [];
+                    $isUnique           = false;
+                    $uniqueKeyName      = null;
+                    foreach ($uniqueKeysForTable as $uniqueKey) {
+                        if ($uniqueKey->columns === $columnName) {
+                            $isUnique                                         = true;
+                            $uniqueKeyName                                    = $uniqueKey->INDEX_NAME;
+                            $this->uniqueKeyIsSetFor[$tableName][$columnName] = true;
+                        }
+                    }
+
+                    $columnMigration = $this->meltor->generateMigrationColumn($column, $this->ignoreProblems, $isUnique, $uniqueKeyName);
 
                     if (!$columnMigration) {
                         $this->problems['nonGeneratedColumns'][$tableName][] = $columnName;
@@ -162,7 +175,9 @@ class MeltorGenerate extends Command
 
             // Unique Keys.
             foreach ($uniqueKeys->get($tableName) ?? [] as $uniqueKey) {
-                $columnMigrations[] = $this->meltor->generateMigrationUniqueKey($uniqueKey, $this->problems['nonGeneratedColumns'] ?? [], $this);
+                if (!($this->uniqueKeyIsSetFor[$tableName][$uniqueKey->columns] ?? false)) {
+                    $columnMigrations[] = $this->meltor->generateMigrationUniqueKey($uniqueKey, $this->problems['nonGeneratedColumns'] ?? [], $this);
+                }
             }
 
             // Index Keys.
