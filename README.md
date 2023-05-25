@@ -28,44 +28,6 @@ You can install the package via composer:
 composer require cybex/laravel-meltor
 ```
 
-### Access to the MySQL information schema
-
-Add a new connection to `config/database.php` under the `connections` key, so that it is accessible with `config('database.connections.information_schema_mysql')`. 
-It can be based on your regular connection, with just the database set to `information_schema`. 
-
-For example
-```
-  // Information schema connection for the laravel-meltor package
-  'information_schema_mysql' => [
-      'driver'      => 'mysql',
-      'host'        => env('TEST_DB_HOST', env('DB_HOST', '127.0.0.1')),
-      'port'        => env('TEST_DB_PORT', env('DB_PORT', '3306')),
-      'database'    => 'information_schema',
-      'username'    => env('DB_USERNAME', 'forge'),
-      'password'    => env('DB_PASSWORD', ''),
-      'unix_socket' => env('DB_SOCKET', ''),
-      'charset'     => 'utf8mb4',
-      'collation'   => 'utf8mb4_unicode_ci',
-      'prefix'      => '',
-      'strict'      => true,
-      'engine'      => null,
-  ],
-```
-
-As this package intended to generate a new migration on a non-production system, there may be no need to commit this new connection.
-
-#### Permissions
-
-Make sure that your local database user has sufficient permissions to access all tables of the mysql information_schema db.
-If the permissions are insufficient, this package will use Doctrine through PHP, instead of reading from the according mysql information_schema tables.
-The fallback to Doctrine leads to the following deviations in the new, generated migration:
-
-- Spatial indexes will be left out
-- The index order within tables may differ
-
-Configuring the root user to access the database with sufficient permissions is possible, but generally not recommended for multiple reasons.
-
-
 ## Usage
 
 To create a new migration file:
@@ -145,6 +107,23 @@ right when creating a new table. This also makes the migration easier to read be
 Should this fail to work with your version of MySQL, or should you prefer not to use this db statement, you can use the `--separateForeignKeys` to move all foreign 
 key declarations to the end of the migration file, which separates the table declarations and their order from the dependencies and the order in which foreign keys
 have to be created.
+
+#### Access to the MySQL information schema
+
+By default, this package uses the credentials of the default "mysql" laravel database connection to access the "information_schema" MySQL database.
+This is required in order to read out information about indices.
+
+You can configure a different database connection name in the meltor configuration file, which may be published with `php artisan vendor:publish`
+
+If the permissions of the database credentials do not allow access to all tables of the mysql information_schema db, this package will use Doctrine through PHP,
+instead of reading from the according mysql information_schema tables.
+
+The fallback to Doctrine leads to the following deviations in the new, generated migration:
+
+- Spatial indexes will be left out
+- The index order within tables may differ
+
+Configuring the root user to access the database with sufficient permissions is possible, but generally not recommended for multiple reasons.
 
 ## Security
 

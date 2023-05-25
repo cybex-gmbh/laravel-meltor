@@ -2,9 +2,10 @@
 
 namespace Meltor;
 
-use Meltor\Commands\MeltorGenerate;
+use Config;
 use Illuminate\Support\ServiceProvider;
 use Meltor\Commands\MeltorDiff;
+use Meltor\Commands\MeltorGenerate;
 use Meltor\Commands\MeltorRestore;
 use Meltor\Commands\MeltorTestMigration;
 
@@ -41,6 +42,18 @@ class MeltorServiceProvider extends ServiceProvider
         // Automatically apply the package configuration
         $this->mergeConfigFrom(__DIR__ . '/../config/meltor.php', 'meltor');
         $this->mergeConfigFrom(__DIR__ . '/../config/meltor-templates.php', 'meltor-templates');
+
+        // Add a new database connection based on the target database connection
+        $connectionName = Config::get('meltor.connection.schema');
+        $connection = Config::get('database.connections.' . $connectionName);
+
+        if (!$connection) {
+            throw new \Exception(sprintf('DB connection "%s" not found. Please refer to the readme regarding access to the MySQL information schema.', $connectionName));
+        }
+
+        $connection['database'] = 'information_schema';
+
+        Config::set('database.connections.meltor_information_schema', $connection);
 
         // Register the main class to use with the facade
         $this->app->singleton('meltor', function () {

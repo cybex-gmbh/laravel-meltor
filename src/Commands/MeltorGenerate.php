@@ -60,10 +60,9 @@ class MeltorGenerate extends Command
         $this->separateForeignKeys = $this->option('separateForeignKeys');
         $this->dataConnection      = DB::connection($this->meltor->config('connection.data'));
         $this->databaseName        = $this->dataConnection->getDatabaseName();
-        $schemaConnectionName      = $this->meltor->config('connection.schema');
 
         try {
-            $this->schemaConnection = DB::connection($schemaConnectionName);
+            $this->schemaConnection = DB::connection('meltor_information_schema');
         } catch (Exception $exception) {
             $this->warn(sprintf('Please configure a database connection named %s that points to the information_schema database. See README.md.', $schemaConnectionName));
             return 1;

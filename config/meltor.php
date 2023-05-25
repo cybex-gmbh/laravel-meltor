@@ -10,8 +10,8 @@ return [
         // Connection to read the tables.
         'data'   => fn() => DB::getDefaultConnection(),
 
-        // You may need to create a new DB connection that points to the information_schema. See README.md.
-        'schema' => 'information_schema_mysql',
+        // Name of a database connection whose credentials give access to the information_schema DB.
+        'schema' => 'mysql',
     ],
 
     'migration' => [
