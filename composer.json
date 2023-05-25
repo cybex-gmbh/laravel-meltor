@@ -1,0 +1,63 @@
+{
+    "name": "cybex/laravel-meltor",
+    "description": "Consolidate all prior database migrations based on the current database state.",
+    "keywords": [
+        "laravel",
+        "migrations",
+        "migration"
+    ],
+    "homepage": "https://github.com/cybex-gmbh/laravel-meltor",
+    "license": "MIT",
+    "type": "library",
+    "support": {
+        "issues": "https://github.com/cybex-gmbh/laravel-meltor/issues",
+        "source": "https://github.com/cybex-gmbh/laravel-meltor"
+    },
+    "authors": [
+        {
+            "name": "Gael Connan",
+            "email": "gael.connan@cybex-online.com",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "cybex/laravel-protector": "^1.4",
+        "cybex/laravel-reflector": "^1.1",
+        "illuminate/support": "^8.0|^9.0",
+        "jfcherng/php-diff": "^6.0",
+        "laravel/sail": "^1.14"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^7.5",
+        "phpunit/phpunit": "^9.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Meltor\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Meltor\\Tests\\": "tests"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Meltor\\MeltorServiceProvider"
+            ],
+            "aliases": {
+                "Meltor": "Meltor\\MeltorFacade"
+            }
+        }
+    }
+}
